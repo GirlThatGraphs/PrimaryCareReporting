@@ -1,0 +1,1747 @@
+---
+params:
+  param_1: "All"
+title: "Primary Care Ranking Report"
+output: 
+  html_document:
+    css: Title/RankingStyle.css
+    smooth_scroll: false
+    includes:
+      in_header: Title/Header.html
+---
+
+```{r SETUP, include = FALSE}
+#
+options(knitr.kable.NA = '')
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+code <- params$param_1
+```
+
+```{r PACMAN, include = FALSE}
+#
+library(DBI)
+library(dplyr)
+library(dbplyr)
+library(DT)
+library(gdata)
+library(gt)
+library(htmltools)
+library(httr)
+library(jsonlite)
+library(kableExtra)
+library(knitr)
+library(lubridate)
+library(odbc)
+library(readxl)
+library(scales)
+library(stringr)
+library(svglite)
+library(tidyverse)
+library(writexl)
+library(zoo)
+library(fingertipsR)
+
+install.packages(
+  "O:/BSS/BI/Intelligence Services/BSSW/Somerset/TeamArea/Reference/R/SCWStyler_0.1.0.tar.gz",
+  repos = NULL,
+  type = "source"
+)
+library(SCWStyler)
+
+```
+
+```{r THEME, include = FALSE}
+#
+windowsFonts(`Fira Sans` = windowsFont("Arial"))
+#
+theme_set(theme_grey() + SCW_theme())
+#
+
+```
+
+```{r SQL, include = FALSE}
+#
+SQL_CONNECTION <- dbConnect(odbc(), 
+                            driver = "SQL Server",
+                            server ="BIS-000-SP08.bis.xswhealth.nhs.uk, 14431",
+                            database ="Analyst_SQL_Area",
+                            trustedconnection = TRUE)
+
+SQL_CONNECTION_DM <- dbConnect(odbc(), 
+                            driver = "SQL Server",
+                            server ="BIS-000-SP08.bis.xswhealth.nhs.uk, 14431",
+                            database ="Data_Mart",
+                            trustedconnection = TRUE)
+```
+
+```{r GP_List, include = FALSE}
+#
+GP_List <- read_excel("O:/BSS/BI/Intelligence Services/BSSW/Somerset/Reports/Primary_Care_Report/Data/GP List.xlsx")
+#
+```
+
+```{r GP Database, include = FALSE}
+#
+GP_Contract_Database_Contact_Lists_Live <-
+  read_excel("//somerset.xswhealth.nhs.uk/ccg/Directorate/Clinical Commissioning Development/Comm & PC Services/PRIMARY CARE/Enhanced Services/GP/GP Contract Database & Contact Lists - Live.xlsm",
+    skip = 3)
+#
+GP_Database <- GP_Contract_Database_Contact_Lists_Live %>%
+  mutate(`ES` = (case_when (is.na (`Anti-Coagulation Initiation, Stabilisation and Monitoring`) ~ 0, TRUE ~1) 
+               + case_when (is.na (`Primary Care Improvement Scheme`) ~ 0, TRUE ~1)
+               + case_when (is.na (`Enhanced Drug Monitoring`) ~ 0, TRUE ~1))) %>% 
+  mutate(`Risk` = case_when(`ES` == 0 ~ "high",
+                            `ES` == 1 ~ "high",
+                            `ES` == 3 ~ "low",
+                            TRUE ~ "medium"))
+  
+```
+
+```{r GP Sizing, include = FALSE}
+#
+GP_Sizing_Tool <-
+  read_excel(
+    "O:/BSS/BI/Intelligence Services/BSSW/Somerset/Reports//Primary_Care_Report/Data/NEW - GP Sizing Tool (care WIP 2016 tool with updated list sizes).xls",
+    sheet = "Premises Data",
+    range = "A4:AH88")
+#
+GP_Sizing <- GP_Sizing_Tool %>%
+  mutate(`Community Pharmacy on site?` =  case_when(`Community Pharmacy on site?` == "Yes" ~ "Yes",
+                                                    TRUE ~ "No")) %>%
+  filter(`Property Name` %in% GP_List$`Practice Name`) %>%
+  mutate(`Undersized2` = ((`Gross Holding Area GIA (m²) cumulative` / `Desired Area GIA (m²)`) -  1)) %>%
+  mutate(`UndersizedRank` = rank(`Undersized2`)) %>%
+  mutate(`UndersizedRisk` = case_when(Undersized < 0.16 ~ "low",
+                                      Undersized > 0.5 ~ "high",
+                                      TRUE ~ "medium"))
+```
+
+```{r Meds Management, include = FALSE}
+#
+MM_Finance <- read_excel("O:/BSS/BI/Intelligence Services/BSSW/Somerset/Reports//Primary_Care_Report/Data/MM scorecard March 2021 final.xlsx",
+                         sheet = "Alphabetical Scorecard 20-21 ",
+                         range = "A1:Y66")
+#
+MM_Green <- read_excel("O:/BSS/BI/Intelligence Services/BSSW/Somerset/Reports/Primary_Care_Report/Data/MM scorecard 2022-23 May Final.xlsx",
+                       sheet = "Ranked scorecard 2022-23",
+                       range = "A1:AX65") %>% 
+  dplyr::select(2, `Count of greens amongst indicators 1-20`)
+
+MM_Green_Hist <- read_excel("O:/BSS/BI/Intelligence Services/BSSW/Somerset/Reports//Primary_Care_Report/Data/MM scorecard 2022-23 April Final.xlsx",
+                       sheet = "Ranked scorecard 2022-23",
+                       range = "A1:AX65") %>% 
+            dplyr::select(2, `Count of greens amongst indicators 1-20`) %>% 
+                  dplyr::rename("GreenHist" = 2)
+#
+MM_Date<-"May 2022"
+
+MM_Fin_Date<-"March 2021"
+ 
+MM_Finance<-MM_Finance %>% 
+  filter(`...1` != 'L85612') %>% 
+  drop_na(`...1`) %>%
+  mutate(OverspendMoney = dollar_format(prefix="£")(`Forecast over/underspend (£)   (after flu and pneumococcal vaccine spends deducted)****`)) %>%
+  mutate(Overspend = (`Forecast over/underspend (£)   (after flu and pneumococcal vaccine spends deducted)****` / `Annual Budget`)) %>% 
+  mutate(Overspend_Rank = rank(Overspend)) %>% 
+  mutate(Overspend_RankC = case_when(Overspend_Rank <= 16 ~ "low",
+                                     Overspend_Rank >= 49 ~ "high",
+                                     TRUE ~ "medium"))
+#
+MM_Green <- MM_Green %>%
+  filter(`...2` != 'L85612') %>% 
+  drop_na(`Count of greens amongst indicators 1-20`) %>%
+  mutate(Green_Rank = rank(-`Count of greens amongst indicators 1-20`)) %>%
+  mutate(Green_RankC = case_when(Green_Rank <= 16 ~ "low",
+                                 Green_Rank >= 49 ~ "high",
+                                 TRUE ~ "medium")) %>% 
+  left_join(MM_Green_Hist, by = c("...2")) %>% 
+  mutate(Green_Rank_Hist = rank(-`GreenHist`)) %>%
+  mutate(Green_RankC_Hist = case_when(Green_Rank_Hist <= 16 ~ "low",
+                                 Green_Rank_Hist >= 49 ~ "high",
+                                 TRUE ~ "medium")) 
+
+MM_Green_Alert <- MM_Green %>% 
+  dplyr::select(1, 2, 5, 4, 7) %>% 
+  filter((Green_RankC %in% c("high") & Green_RankC_Hist %in% ("medium")) | 
+         (Green_RankC %in% c("medium","high") & Green_RankC_Hist %in% c("low")))
+```
+
+```{r MMDownload, include=FALSE}
+MMDownload <- read_excel("Data/MMDownload.xlsx") %>% 
+  fill(`Indicator Name`) 
+
+MMDownloadDate <- MMDownload %>% 
+  dplyr::select(`Time Period`) %>% 
+  head(1) %>% 
+  pull()
+
+MMDownload <- MMDownload %>% 
+   dplyr::select(`GP Org Code`, `Indicator Name`, `Value.`) %>% 
+  pivot_wider(names_from = `Indicator Name`, values_from = `Value.`)
+```
+
+```{r Diabeties Audit, include=FALSE}
+Diabeties_Audit_Date <- "December 2021"
+
+Diabetes_Audit_T1 <- read_excel("Data/National Diabetes Audit 2021-22 Quarterly Report January 2021 to December 2021.xlsx", 
+    sheet = "Type 1 CP_TT", skip = 2) %>% 
+  dplyr::select(2, 3, 31) %>% 
+  filter(CCG %in% c("England", "11X")) %>% 
+  mutate(`Type 1` = percent(`Percentage...31`/100), accuracy = 1) %>% 
+  dplyr::select(2,4)
+
+Diabetes_Audit_T2 <- read_excel("Data/National Diabetes Audit 2021-22 Quarterly Report January 2021 to December 2021.xlsx", 
+    sheet = "Type 2 and other CP_TT", skip = 2) %>% 
+  dplyr::select(2, 3, 31) %>% 
+  filter(CCG %in% c("England", "11X"))%>% 
+  mutate(`Type 2 and Other` = percent(`Percentage...31`/100), accuracy = 1) %>% 
+  dplyr::select(2,4)
+
+Diabeties_Audit <- Diabetes_Audit_T1 %>% 
+  left_join(Diabetes_Audit_T2)
+```
+
+```{r Contract Tracker, include = FALSE}
+#
+GMS_Contracts <-
+  read_excel("//somerset.xswhealth.nhs.uk/ccg/Directorate/Clinical Commissioning Development/Comm & PC Services/PRIMARY CARE/Proposed Folder Structure/Contract Processes/Contract Variations/1. Contract Variation Tracker.xlsx",
+             sheet = "GMS",
+             skip = 1)
+#
+PMS_Contracts <-
+  read_excel("//somerset.xswhealth.nhs.uk/ccg/Directorate/Clinical Commissioning Development/Comm & PC Services/PRIMARY CARE/Proposed Folder Structure/Contract Processes/Contract Variations/1. Contract Variation Tracker.xlsx",
+             sheet = "PMS",
+             skip = 1)
+
+GMSServices <- GMS_Contracts %>%
+  dplyr::select(1, 34:37) %>% 
+  dplyr::rename(c(Code=1
+           ,`Learning Disabilities Health Check Scheme`=2
+           ,`Minor Surgery`=3
+           ,`Out of Area In Hours Urgent Primary Medical Care`=4
+           ,`Network Contract from 1 July 2019`=5))
+#
+PMSServices <- PMS_Contracts %>%
+  dplyr::select(1, 40:43) %>% 
+  dplyr::rename(Code=1
+        ,`Network Contract from 1 July 2019` = 5)
+
+DES<-rbind(GMSServices, PMSServices) %>% 
+    mutate(`DES` = (case_when ((`Network Contract from 1 July 2019` == "Yes") ~ 1, TRUE ~0) + 
+                    case_when ((`Learning Disabilities Health Check Scheme` == "Yes") ~ 1, TRUE ~0) + 
+                    case_when ((`Minor Surgery` == "Yes") ~ 1, TRUE ~0))) %>% 
+  mutate(`Risk`=case_when(`DES` == 0 ~ "high",
+                          `DES` == 1 ~ "high",
+                          `DES` == 3 ~ "low",
+                          TRUE ~ "medium"))
+```
+
+```{r GPSurvey, include = FALSE}
+GPSurvey <- read_excel("O:/BSS/BI/Intelligence Services/BSSW/Somerset/Reports//Primary_Care_Report/Data/GPSurvey.xlsx") %>% 
+  spread(Response,Count, fill=0) %>%
+  mutate(Score = (`Very good`+`Very easy`+`Fairly good`+`Fairly easy`)/(`Very good`+`Very easy`+`Fairly good`+`Fairly easy`+`Fairly poor`+`Very poor`+`Not at all easy`+`Not very easy` + `Neither good nor poor` )) %>%
+  dplyr::select(Question, Year, `Practice code`, `Practice name`, `Score`) %>%
+  mutate(Risk = case_when(Year < max(Year) ~ 0,
+                          Year == 2022 & Question == "getting_through" & Score < 0.243 ~ 1,
+                          Year == 2022 & Question == "appt_experience" & Score < 0.342 ~ 1,
+                          Year == 2022 & Question == "overall_experience" & Score < 0.547 ~ 1,
+                          Year == 2021 & Question == "getting_through" & Score < 0.437 ~ 1,
+                          Year == 2021 & Question == "appt_experience" & Score < 0.528 ~ 1,
+                          Year == 2021 & Question == "overall_experience" & Score < 0.692 ~ 1,
+
+                          TRUE ~ 0)) %>% 
+  pivot_wider(names_from = c(Question, Year), values_from = c(Score, Risk)) %>% 
+  mutate(Risk = Risk_appt_experience_2022 + Risk_getting_through_2022 + Risk_overall_experience_2022,
+         RiskHist = Risk_appt_experience_2021 + Risk_getting_through_2021 + Risk_overall_experience_2021) %>% 
+  mutate(RiskC = case_when(Risk == 0 ~ "low",
+                           TRUE ~ "high"),
+         RiskCHist = case_when(RiskHist == 0 ~ "low",
+                           TRUE ~ "high")) %>% 
+  dplyr::select(`Practice code`, Score_appt_experience_2021, Score_appt_experience_2022, Score_getting_through_2021, 
+         Score_getting_through_2022, Score_overall_experience_2021, Score_overall_experience_2022, RiskCHist, RiskC)
+
+
+GPSurveySummary <- GPSurvey %>% 
+  filter(RiskC == "high")
+```
+
+```{r (REFERENCE_FEDERATION), include = FALSE}
+MERGERS <- tbl(SQL_CONNECTION, in_schema("SOM", "REFERENCE_FEDERATION")) %>%
+  collect() %>% 
+  filter(`MergePracticeCode` != 'L85612')
+#
+```
+
+```{r (LKUP), include = FALSE}
+
+LKUP2 <- MERGERS %>% 
+  dplyr::select(`MergePracticeCode`, `PracticeDescription`,PrimaryCareNetworkDescription, Provider) %>% 
+  {if (code=="All") . else filter(., Provider==code)} %>%
+  mutate(PracticeDescription = 
+           case_when(Provider == "Symphony Healthcare Services" ~ paste(PracticeDescription,"(SHS)", sep = " "),
+                                 TRUE ~ PracticeDescription)) %>% 
+  unique() %>% 
+  dplyr::select(`MergePracticeCode`, `PracticeDescription`, PrimaryCareNetworkDescription)  
+
+  LKUP2$PracticeDescription <- as.factor(LKUP2$PracticeDescription)
+
+  LKUP<-MERGERS %>% 
+    mutate(PracticeDescription = 
+           case_when(Provider == "Symphony Healthcare Services" ~ paste(PracticeDescription,"(SHS)", sep = " "),
+                                 TRUE ~ PracticeDescription)) %>% 
+  dplyr::select(`MergePracticeCode`, `PracticeDescription`) %>% 
+  unique()
+
+```
+
+```{r WorkforceGP, include = FALSE}
+#
+WorkforceAll <- read_excel("O:/BSS/BI/Intelligence Services/BSSW/Somerset/Reports//Primary_Care_Report/Data/Workforce2.xlsx") %>%
+  left_join(MERGERS, by = c("PRAC_CODE" = "PracticeCode"))
+
+Workforce_Date <- max(WorkforceAll$MONTH_DATE)
+#
+WorkforceGP <- WorkforceAll %>%
+  mutate(`TOTAL_GP_PTNR_HC` = TOTAL_GP_SEN_PTNR_HC + TOTAL_GP_PTNR_PROV_HC,
+         `TOTAL_GP_HC_55plus` = `TOTAL_GP_EXTGL_HC_55TO59` + `TOTAL_GP_EXTGL_HC_60TO64` + `TOTAL_GP_EXTGL_HC_65TO69` + `TOTAL_GP_EXTGL_HC_70PLUS`,
+         `TOTAL_GP_HC_ALL` = TOTAL_GP_HC,
+         `TOTAL_GP_HC_REGULAR` = TOTAL_GP_EXTGL_HC ,
+         `TOTAL_GP_FTE_REGULAR` = round(TOTAL_GP_EXTGL_FTE,1)) %>%
+  dplyr::select(`MONTH_DATE`,
+         `MergePracticeCode`,
+         `TOTAL_PATIENTS`,
+         `TOTAL_GP_HC_ALL`,
+         `TOTAL_GP_HC_REGULAR`,
+         `TOTAL_GP_PTNR_HC`,
+         `TOTAL_GP_FTE_REGULAR`,
+         `TOTAL_GP_HC_55plus`) %>%
+  mutate(Patient_GP_ratio = round(TOTAL_PATIENTS / TOTAL_GP_FTE_REGULAR),
+         GP_55plus_ratio = TOTAL_GP_HC_55plus / TOTAL_GP_HC_REGULAR) %>% 
+  group_by(`MONTH_DATE`,
+           `MergePracticeCode`) %>%
+  summarise_all(sum, na.rm = T) %>%
+  ungroup() %>% 
+  arrange(MONTH_DATE) %>% 
+  group_by(`MergePracticeCode`) %>% 
+  mutate(CHANGE_GP_FTE_REGULAR = round(TOTAL_GP_FTE_REGULAR - lag(TOTAL_GP_FTE_REGULAR),1),
+         CHANGE_GP_PTNR_HC = TOTAL_GP_PTNR_HC - lag(TOTAL_GP_PTNR_HC),
+         CHANGE_GP_HC_REGULAR = TOTAL_GP_HC_REGULAR - lag(TOTAL_GP_HC_REGULAR),
+         CHANGE_GP_HC_55plus = TOTAL_GP_HC_55plus - lag(TOTAL_GP_HC_55plus),
+         CHANGE_GP_55plus_ratio = GP_55plus_ratio - lag(GP_55plus_ratio),
+         CHANGE_PATIENTS = TOTAL_PATIENTS - lag(TOTAL_PATIENTS),
+         CHANGE_PATIENTS_ratio = (TOTAL_PATIENTS / lag(TOTAL_PATIENTS)-1)) %>% 
+  ungroup() %>% 
+  mutate(Risk_GP_Partners = case_when(TOTAL_GP_PTNR_HC >= 4 ~ -1,
+                                      TOTAL_GP_PTNR_HC >= 3 ~ 1,
+                                      TOTAL_GP_PTNR_HC >= 2 ~ 2,
+                                      TRUE ~ 3),
+         Risk_GP_Headcount	= case_when(TOTAL_GP_HC_REGULAR >= 6 ~ -1,
+                                        TOTAL_GP_HC_REGULAR >= 5 ~ 0,
+                                        TOTAL_GP_HC_REGULAR >= 4 ~ 1,
+                                        TOTAL_GP_HC_REGULAR >= 3 ~ 2,
+                                        TRUE ~ 3),
+         Risk_Patient_GP_ratio = case_when(round(Patient_GP_ratio) >= 3000 ~ 3,
+                                           round(Patient_GP_ratio) >= 2500 ~ 2,
+                                           round(Patient_GP_ratio) >= 2000 ~ 1,
+                                           round(Patient_GP_ratio) >= 1500 ~ 0,
+                                           TRUE ~ -1),
+         Risk_GP_55 = case_when(GP_55plus_ratio >= 1 ~ 3,
+                                GP_55plus_ratio >= 0.8 ~ 2,
+                                GP_55plus_ratio >= 0.6 ~ 1,
+                                GP_55plus_ratio >= 0.4 ~ 0,
+                                TRUE ~ -1),
+         Risk_Reduced_GPFTE = case_when(CHANGE_GP_FTE_REGULAR < 0 ~ 3,
+                                        TRUE ~ 0)) %>%
+  mutate(`GP_Risk` = Risk_GP_Partners + Risk_GP_Headcount + Risk_Patient_GP_ratio + Risk_GP_55 + Risk_Reduced_GPFTE) %>% 
+  group_by(MONTH_DATE) %>% 
+  mutate(`GP_Risk_Rank` = rank(`GP_Risk`)) %>%
+  mutate(GP_Risk_RankC = case_when(GP_Risk_Rank <= 16 ~ "low",
+                                   GP_Risk_Rank >= 49 ~ "high",
+                                   TRUE ~ "medium")) %>% 
+  ungroup() %>% 
+  arrange(MONTH_DATE) %>% 
+  group_by(`MergePracticeCode`) %>% 
+  mutate(GP_Risk_Hist = lag(GP_Risk),
+         TOTAL_GP_PTNR_HC_Hist = lag(TOTAL_GP_PTNR_HC),
+         TOTAL_GP_HC_REGULAR_Hist = lag(TOTAL_GP_HC_REGULAR),
+         TOTAL_GP_FTE_REGULAR_Hist = lag(TOTAL_GP_FTE_REGULAR),
+         GP_55plus_ratio_Hist = lag(GP_55plus_ratio),
+         GP_Risk_RankC_Hist = lag(GP_Risk_RankC),
+         TOTAL_GP_HC_55plus_Hist = lag(TOTAL_GP_HC_55plus)) %>% 
+  ungroup() %>% 
+  filter(MONTH_DATE == max(MONTH_DATE))
+
+ WorkforceGPRisk <- WorkforceGP %>% 
+   dplyr::select(MergePracticeCode, GP_Risk_Rank, GP_Risk_RankC,GP_Risk_RankC_Hist,
+         TOTAL_GP_PTNR_HC, TOTAL_GP_PTNR_HC_Hist, CHANGE_GP_PTNR_HC,
+         `TOTAL_GP_HC_ALL`, 
+         TOTAL_GP_HC_REGULAR, TOTAL_GP_HC_REGULAR_Hist, CHANGE_GP_HC_REGULAR,
+         TOTAL_GP_FTE_REGULAR, TOTAL_GP_FTE_REGULAR_Hist, CHANGE_GP_FTE_REGULAR,
+         TOTAL_GP_HC_55plus, TOTAL_GP_HC_55plus_Hist, CHANGE_GP_HC_55plus,
+         Patient_GP_ratio)
+
+  WorkforceGPRiskSummary <- WorkforceGP %>% 
+  dplyr::select(MergePracticeCode, `GP_Risk_RankC`,GP_Risk_RankC_Hist,
+         TOTAL_GP_PTNR_HC, TOTAL_GP_PTNR_HC_Hist, CHANGE_GP_PTNR_HC,
+         TOTAL_GP_HC_REGULAR, TOTAL_GP_HC_REGULAR_Hist, CHANGE_GP_HC_REGULAR,
+         TOTAL_GP_HC_55plus, TOTAL_GP_HC_55plus_Hist, CHANGE_GP_HC_55plus) %>% 
+  filter(  (GP_Risk_RankC %in% c("high") & GP_Risk_RankC_Hist %in% ("medium")) | 
+           (GP_Risk_RankC %in% c("medium","high") & GP_Risk_RankC_Hist %in% c("low"))|
+            CHANGE_GP_PTNR_HC < 0 | CHANGE_GP_HC_REGULAR < 0 | CHANGE_GP_HC_55plus > 0)
+```
+
+
+```{r WorkforceNurse, include = FALSE}
+WorkforceNURSE <- WorkforceAll %>%
+  mutate(`TOTAL_NURSES_HC_55plus` = `TOTAL_NURSES_HC_55TO59` + `TOTAL_NURSES_HC_60TO64` + `TOTAL_NURSES_HC_65TO69` + `TOTAL_NURSES_HC_70PLUS`,
+         TOTAL_NURSES_FTE = round(TOTAL_NURSES_FTE,1)) %>%
+  dplyr::select(`MONTH_DATE`,
+         `MergePracticeCode`,
+         `TOTAL_PATIENTS`,
+         `TOTAL_NURSES_HC`,
+         `TOTAL_NURSES_FTE`,
+         `TOTAL_NURSES_HC_55plus`,
+         `TOTAL_DPC_HC`) %>%
+  mutate(Patient_NURSES_ratio = round(TOTAL_PATIENTS / TOTAL_NURSES_FTE),
+         NURSE_55plus_ratio = TOTAL_NURSES_HC_55plus / TOTAL_NURSES_HC) %>% 
+  group_by(`MONTH_DATE`,
+           `MergePracticeCode`) %>%
+  summarise_all(sum, na.rm = T) %>%
+  ungroup() %>% 
+  arrange(MONTH_DATE) %>% 
+  group_by(`MergePracticeCode`) %>% 
+  mutate(CHANGE_NURSES_FTE = round(TOTAL_NURSES_FTE - lag(TOTAL_NURSES_FTE),1),
+         CHANGE_NURSES_HC = round(TOTAL_NURSES_HC - lag(TOTAL_NURSES_HC),1),
+         CHANGE_NURSES_HC_55plus_ratio = NURSE_55plus_ratio - lag(NURSE_55plus_ratio),
+         CHANGE_NURSES_HC_55plus = TOTAL_NURSES_HC_55plus - lag(TOTAL_NURSES_HC_55plus),
+         CHANGE_PATIENTS = TOTAL_PATIENTS - lag(TOTAL_PATIENTS),
+         CHANGE_PATIENTS_ratio = (TOTAL_PATIENTS / lag(TOTAL_PATIENTS)-1),
+         CHANGE_DPC_HC = (TOTAL_DPC_HC - lag(TOTAL_DPC_HC))) %>% 
+  ungroup() %>% 
+  mutate(Risk_NURSES_Headcount	= case_when(TOTAL_NURSES_HC >= 4 ~ -1,
+                                           TOTAL_NURSES_HC >= 3 ~ 0,
+                                           TOTAL_NURSES_HC >= 2 ~ 2,
+                                           TRUE ~ 3),
+         Risk_Reduced_NURSESFTE = case_when(CHANGE_NURSES_FTE < 0 ~ 3,
+                                            TRUE ~ 0),
+         Risk_NURSES_55 = case_when(NURSE_55plus_ratio >= 0.9 ~ 3,
+                                    NURSE_55plus_ratio >= 0.8 ~ 2,
+                                    NURSE_55plus_ratio >= 0.6 ~ 1,
+                                    NURSE_55plus_ratio >= 0.4 ~ 0,
+                                    TRUE ~ -1),
+         Risk_Patient_NURSES_ratio = case_when(Patient_NURSES_ratio >= 5000 ~ 3,
+                                               Patient_NURSES_ratio >= 4000 ~ 2,
+                                               Patient_NURSES_ratio >= 3000 ~ 1,
+                                               TRUE ~ -1)) %>%
+  mutate(`Nurse_Risk` = Risk_NURSES_Headcount + Risk_Reduced_NURSESFTE + Risk_NURSES_55 + Risk_Patient_NURSES_ratio) %>% 
+  group_by(MONTH_DATE) %>% 
+  mutate(`Nurse_Risk_Rank` = rank(`Nurse_Risk`)) %>%
+  mutate(Nurse_Risk_RankC = case_when(Nurse_Risk_Rank <= 16 ~ "low",
+                                      Nurse_Risk_Rank >= 49 ~ "high",
+                                      TRUE ~ "medium")) %>% 
+  ungroup() %>% 
+  arrange(MONTH_DATE) %>% 
+  group_by(`MergePracticeCode`) %>% 
+  mutate(Nurse_Risk_Hist = lag(Nurse_Risk),
+         TOTAL_NURSES_HC_Hist = lag(TOTAL_NURSES_HC),
+         TOTAL_NURSES_FTE_Hist = lag(TOTAL_NURSES_FTE),
+         NURSE_55plus_ratio_Hist = lag(NURSE_55plus_ratio),
+         TOTAL_NURSES_HC_55plus_Hist = lag(TOTAL_NURSES_HC_55plus),
+         Nurse_Risk_RankC_Hist = lag(Nurse_Risk_RankC),
+         TOTAL_DPC_HC_Hist = lag(TOTAL_DPC_HC)) %>% 
+  ungroup() %>% 
+  filter(MONTH_DATE == max(MONTH_DATE))
+##
+  WorkforceDCPRisk <- WorkforceNURSE %>% 
+  dplyr::select(MergePracticeCode, TOTAL_DPC_HC, TOTAL_DPC_HC_Hist, `CHANGE_DPC_HC`)
+##
+  WorkforceNURSERisk <- WorkforceNURSE %>% 
+  dplyr::select(MergePracticeCode, Nurse_Risk_Rank, Nurse_Risk_RankC,Nurse_Risk_RankC_Hist,
+         TOTAL_NURSES_HC, TOTAL_NURSES_HC_Hist, CHANGE_NURSES_HC,
+         TOTAL_NURSES_FTE, TOTAL_NURSES_FTE_Hist, CHANGE_NURSES_FTE,
+         TOTAL_NURSES_HC_55plus, TOTAL_NURSES_HC_55plus_Hist, CHANGE_NURSES_HC_55plus,
+         Patient_NURSES_ratio)  
+##
+  WorkforceNURSESummary <- WorkforceNURSE %>% 
+  dplyr::select(MergePracticeCode, `Nurse_Risk_RankC`,Nurse_Risk_RankC_Hist,
+         TOTAL_NURSES_HC, TOTAL_NURSES_HC_Hist, CHANGE_NURSES_HC,
+         TOTAL_NURSES_HC_55plus, TOTAL_NURSES_HC_55plus_Hist, CHANGE_NURSES_HC_55plus) %>% 
+  filter(  (Nurse_Risk_RankC %in% c("high") & Nurse_Risk_RankC_Hist %in% ("medium")) | 
+             (Nurse_Risk_RankC %in% c("medium","high") & Nurse_Risk_RankC_Hist %in% c("low"))|
+             CHANGE_NURSES_HC < 0 | CHANGE_NURSES_HC_55plus > 0)
+```
+
+```{r WorkforceList, include = FALSE}
+WorkforceList <- WorkforceAll %>%
+  dplyr::select(`MONTH_DATE`,
+         `MergePracticeCode`,
+         `TOTAL_PATIENTS`) %>%
+  group_by(`MONTH_DATE`,
+           `MergePracticeCode`) %>%
+  summarise_all(sum, na.rm = T) %>%
+  ungroup() %>% 
+  arrange(MONTH_DATE) %>% 
+  group_by(`MergePracticeCode`) %>% 
+  mutate(CHANGE_PATIENTS = TOTAL_PATIENTS - lag(TOTAL_PATIENTS),
+         CHANGE_PATIENTS_ratio = (TOTAL_PATIENTS / lag(TOTAL_PATIENTS)-1)) %>% 
+  ungroup() %>% 
+  mutate(Risk_List_Change =  case_when(CHANGE_PATIENTS_ratio >= 0 ~ 0,
+                                       CHANGE_PATIENTS_ratio >= -0.01 ~ 4,
+                                       CHANGE_PATIENTS_ratio >= -0.02 ~ 8,
+                                       TRUE ~ 12)) %>%
+  mutate(`List_Risk` = Risk_List_Change) %>% 
+  group_by(MONTH_DATE) %>% 
+  mutate(`List_Risk_Rank` = rank(`List_Risk`)) %>%
+  mutate(List_Risk_RankC = case_when(Risk_List_Change <= 4 ~ "low",
+                                     Risk_List_Change >= 12 ~ "high",
+                                     TRUE ~ "medium"),
+         CHANGE_PATIENTS_ratio = percent(CHANGE_PATIENTS_ratio, accuracy = 1)) %>% 
+  ungroup() %>% 
+  arrange(MONTH_DATE) %>% 
+  group_by(`MergePracticeCode`) %>% 
+  mutate(List_Risk_Hist = lag(List_Risk),
+         TOTAL_PATIENTS_Hist = lag(TOTAL_PATIENTS),
+         List_Risk_RankC_Hist = lag(List_Risk_RankC),
+         CHANGE_PATIENTS_ratio_Hist=lag(CHANGE_PATIENTS_ratio)) %>% 
+  ungroup() %>% 
+  filter(MONTH_DATE == max(MONTH_DATE))
+##
+WorkforceListRisk <- WorkforceList %>% 
+  dplyr::select(MergePracticeCode, `List_Risk_RankC`, TOTAL_PATIENTS, TOTAL_PATIENTS_Hist, CHANGE_PATIENTS, CHANGE_PATIENTS_ratio)  
+##
+  WorkforceListSummary <- WorkforceList %>% 
+  dplyr::select(MergePracticeCode,  `List_Risk_RankC`, List_Risk_RankC_Hist, CHANGE_PATIENTS_ratio,CHANGE_PATIENTS_ratio_Hist) %>% 
+  filter((List_Risk_RankC %in% c("high") & List_Risk_RankC_Hist %in% ("medium")) | 
+         (List_Risk_RankC %in% c("medium","high") & List_Risk_RankC_Hist %in% c("low")))
+```
+
+```{r CareHome, include=FALSE}
+vw_NHAIS_Current_All <- tbl(SQL_CONNECTION_DM, in_schema("Population","vw_NHAIS_Current_All"))
+
+CAREHOMEPOP <- vw_NHAIS_Current_All %>% 
+  dplyr::select(PracticeCode, Derived_IsLivingInCareHome) %>% 
+  group_by(PracticeCode, Derived_IsLivingInCareHome) %>% 
+  dplyr::summarise(Pop = dplyr::n()) %>% 
+  ungroup() %>% 
+  collect() %>% 
+  filter(PracticeCode %in% LKUP2$MergePracticeCode) %>% 
+  pivot_wider(names_from = Derived_IsLivingInCareHome, values_from = Pop) %>% 
+  mutate(CareHomePop = percent(`1`/(`1`+`0`), accuracy  = 0.1)) %>% 
+  dplyr::select(PracticeCode, CareHomePop)
+```
+
+```{r AFVDates, include = FALSE}
+AFVDates <- read_excel("S:/Clinical Commissioning Development/Comm & PC Services/PRIMARY CARE/Proposed Folder Structure/Data & Performance/Assurance Framework/Meetings post-covid/2022-23/AFM arrangements.xlsx", 
+    sheet = "Rolling schedule", col_types = c("text", 
+        "text", "date"))
+
+AFVDates2 <- AFVDates %>% 
+  filter(!is.na(Date)) %>%
+  group_by(`PracticeCode`) %>% 
+  filter(Date == max(Date)) %>% 
+  ungroup %>% 
+  mutate(`3 Year Visit Due` = `Date`%m+% years(3)) %>% 
+  arrange(`3 Year Visit Due`) %>% 
+  mutate (`Alert` = `3 Year Visit Due`%m-% months(6)) 
+```
+
+```{r PCOGRating, include = FALSE}
+
+PCOGRating <- data.frame (Name  = c("Somerset Bridge Medical Centre", 
+                                    "Redgate Medical Centre", 
+                                    "Polden Medical Practice ", 
+                                    "West Coker Surgery",
+                                    "Burnham Medical Centre",
+                                    "Springmead Surgery",
+                                    "Crewkerne Health Centre",
+                                    "Luson Surgery ",
+                                    "Wellington Medical Centre",
+                                    "Glastonbury Health Centre",
+                                    "Minehead Medical Centre"),
+                          Code = c("L85607", "L85051" , "L85024", "Y01163", "L85016", "L85028", "L85004", "L85050", "L85012", "L85047", "L85019"),
+                          RAG = c("Amber", "Amber" , "Amber", "Amber", "Red", "Amber", "Amber", "Amber", "Amber", "Amber", "Amber"))
+
+
+
+```
+
+```{r Advice&Guidance, include = FALSE}
+dbExecute(SQL_CONNECTION, statement = read_file("SQL/AdviceGuidanceSP08.sql"), immediate = TRUE)
+AdviceGuidance <- dbGetQuery(SQL_CONNECTION, "select * from #Results")
+#
+AdviceGuidance <- AdviceGuidance %>% 
+  filter(REFERRING_ORG_ID %in% GP_List$Code) %>% 
+  mutate(Month_Date = as.Date(Month_Date)) %>% 
+  filter(Month_Date >= max(Month_Date)%m-% months(12)) %>% 
+  dplyr::select(REFERRING_ORG_ID,`A&G`,`NonA&G`) %>% 
+  group_by(REFERRING_ORG_ID) %>% 
+  dplyr::summarise(`A&G` = sum(`A&G`),
+            `NonA&G` = sum(`NonA&G`)) %>% 
+  ungroup() %>% 
+  mutate(`Utilisation` =(`A&G`/(`A&G`+`NonA&G`))) %>% 
+  mutate(`Rank` = rank(-`Utilisation`)) %>% 
+  mutate(RankC = case_when(Rank <= 16 ~ "low",
+                                          Rank >= 49 ~ "high",
+                                          TRUE ~ "medium")) 
+  
+AdviceGuidanceCCG<-AdviceGuidance  %>%
+  dplyr::summarise(`TotalA&G` = sum(`A&G`),
+            `TotalNonA&G` = sum(`NonA&G`)) %>% 
+  mutate(`CCGUtilisation` =(`TotalA&G`/(`TotalA&G`+`TotalNonA&G`)))
+```
+
+```{r 1920Finance, include = FALSE}
+`1920Finance` <- read_excel("Data/Practice Contract Earnings 2021-22 - All CCG Spend incl. Prescribing V3.xlsx", 
+    skip = 6)
+
+`1920Finance`<-`1920Finance` %>% 
+  dplyr::select(1,3,7,8) %>% 
+  mutate(Rank=rank(-`£ per Patient (excl. premises)`)) %>% 
+  mutate(RiskC = case_when(
+              `£ per Patient (excl. premises)`<= 134.62 ~ "high",
+              `£ per Patient (excl. premises)` <= 144.97 ~ "medium",
+              TRUE ~ "low")) %>% 
+  filter(`Practice Code` != "L85612")
+```
+
+
+```{r (REFERENCE_TEAM), include = FALSE}
+#
+REFERENCE_TEAM <- tbl(SQL_CONNECTION, in_schema("SOM","REFERENCE_TEAM"))
+```
+
+```{r (POP_POPULATION_TOTAL), include = FALSE}
+#
+POPULATION_QUARTER <- tbl(SQL_CONNECTION, in_schema("SOM","POPULATION_QUARTER")) 
+
+ POPULATION_QUARTER2 <- POPULATION_QUARTER %>% 
+  dplyr::select(`Quarter Date`, `GP Practice Code`, `GP-Registered Population`) %>% 
+  group_by(`Quarter Date`, `GP Practice Code`) %>% 
+  dplyr::summarise(`GP-Registered Population` = sum(`GP-Registered Population`)) %>% 
+  ungroup() %>% 
+  collect() %>% 
+  filter(`Quarter Date` == max(`Quarter Date`)) %>% 
+  dplyr::select(`GP Practice Code`, `GP-Registered Population`)
+
+ POPULATION_QUARTER <- POPULATION_QUARTER %>% 
+  dplyr::select(`Quarter Date`, `GP Practice Code`, `GP-Registered Population`) %>% 
+  group_by(`Quarter Date`, `GP Practice Code`) %>% 
+  dplyr::summarise(`GP-Registered Population` = sum(`GP-Registered Population`)) %>% 
+  ungroup() %>% 
+  collect() %>% 
+  filter(`Quarter Date` > max(`Quarter Date`) %m-% months(4)) %>% 
+  arrange(`Quarter Date`) %>% 
+  group_by(`GP Practice Code`) %>% 
+  mutate(`Population Change` = (`GP-Registered Population`-lag(`GP-Registered Population`)),
+         `Population Change %` = (`GP-Registered Population`/lag(`GP-Registered Population`)-1)) %>%
+  ungroup() %>% 
+  pivot_wider(names_from = `Quarter Date`, values_from = `GP-Registered Population`) %>% 
+  group_by(`GP Practice Code`) %>% 
+  summarise_all(mean,na.rm=T) %>% 
+  ungroup() %>% 
+  arrange(`Population Change %`) %>% 
+  mutate(Rank = rank (-`Population Change %`)) %>% 
+  mutate(`Population Change %` = scales::percent(`Population Change %`, accuracy=1)) %>% 
+  mutate(RankC = case_when(Rank <= 16 ~ "low",
+                                          Rank >= 49 ~ "high",
+                                          TRUE ~ "medium")) 
+```
+
+``` {r (NWL), include = FALSE}
+NWL <- read_excel("Data/NWL.xlsx")
+```
+
+```{r (REFERENCE_DEPRIVATION_GP), include = FALSE}
+REFERENCE_DEPRIVATION_GP <- tbl(SQL_CONNECTION, in_schema("SOM","REFERENCE_DEPRIVATION_GP"))
+
+Deprivation_Date<-max(REFERENCE_DEPRIVATION_GP$ReleaseDate) 
+```
+
+```{r (SUS_STANDARDISATION), include = FALSE}
+SUS_STANDARDISATION <- tbl(SQL_CONNECTION, in_schema("SOM","SUS_STANDARDISATION"))
+#
+GPStandardAll <- SUS_STANDARDISATION %>%
+  filter(`Length of Stay Flag` == "0 and 1+",
+         `NHSE PoD Description` == "Inpatient Emergency") %>%
+  dplyr::select(`GP Practice Description`,
+         `GP Practice Code`,
+         `Conditions Flag`,
+         `Primary Care Network Description`,
+         `NHSE PoD Description`,
+         `Observed Activity`,
+         `Expected Activity`,
+         `Difference`) %>%
+  collect() %>%
+  group_by(`GP Practice Description`,
+         `GP Practice Code`,
+         `Conditions Flag`,
+         `Primary Care Network Description`,
+         `NHSE PoD Description`) %>%
+  dplyr::summarise(`Observed Activity` = sum(`Observed Activity`),
+            `Expected Activity` = sum(`Expected Activity`),
+            `Difference` = sum(`Difference`)) %>%
+  ungroup() %>%
+  mutate(`DifferencePerc` = `Difference` / `Expected Activity`) %>% 
+  group_by(`NHSE PoD Description`,`Conditions Flag`) %>% 
+  mutate(`Rank` = rank(`DifferencePerc`)) %>% 
+  ungroup()
+#
+GPStandard <- SUS_STANDARDISATION %>%
+  filter(`Conditions Flag` == "No Specific Conditions",
+         `Length of Stay Flag` == "0 and 1+") %>%
+  dplyr::select(`GP Practice Code`,`GP Practice Description`,
+         `Primary Care Network Description`,
+         `NHSE PoD Description`,
+         `Observed Activity`,
+         `Expected Activity`,
+         `Difference`) %>%
+  collect() %>%
+  group_by(`GP Practice Code`,`GP Practice Description`,
+           `Primary Care Network Description`,
+           `NHSE PoD Description`) %>%
+  dplyr::summarise(`Observed Activity` = sum(`Observed Activity`),
+            `Expected Activity` = sum(`Expected Activity`),
+            `Difference` = sum(`Difference`)) %>%
+  ungroup() %>%
+  mutate(`DifferencePerc` = `Difference` / `Expected Activity`,
+         `GP Practice Description`=`GP Practice Description`) %>% 
+  group_by(`NHSE PoD Description`) %>% 
+  mutate(`Rank` = rank(`DifferencePerc`)) %>% 
+  ungroup() %>% 
+  mutate(`RiskC` = case_when(Rank <= 16 ~ "low",
+                             Rank >= 49 ~ "high",
+                             TRUE ~ "medium")) 
+
+GPStandardEm1 <- SUS_STANDARDISATION %>%
+  filter(`Conditions Flag` == "No Specific Conditions",
+         `Length of Stay Flag` == "1+",
+         `NHSE PoD Description` == "Inpatient Emergency") %>%
+  dplyr::select(`GP Practice Code`,`GP Practice Description`,
+         `Primary Care Network Description`,
+         `NHSE PoD Description`,
+         `Observed Activity`,
+         `Expected Activity`,
+         `Difference`) %>%
+  collect() %>%
+  group_by(`GP Practice Code`,`GP Practice Description`,
+           `Primary Care Network Description`,
+           `NHSE PoD Description`) %>%
+  dplyr::summarise(`Observed Activity` = sum(`Observed Activity`),
+            `Expected Activity` = sum(`Expected Activity`),
+            `Difference` = sum(`Difference`)) %>%
+  ungroup() %>%
+  mutate(`DifferencePerc` = `Difference` / `Expected Activity`,
+         `GP Practice Description`=`GP Practice Description`) %>% 
+  group_by(`NHSE PoD Description`) %>% 
+  mutate(`Rank` = rank(`DifferencePerc`)) %>% 
+  ungroup() %>% 
+  mutate(`RiskC` = case_when(Rank <= 16 ~ "low",
+                             Rank >= 49 ~ "high",
+                             TRUE ~ "medium"))
+
+SUS_LIVE_Date <- tbl(SQL_CONNECTION, in_schema("SOM","SUS_LIVE")) %>% 
+  dplyr::select(`Month Date`) %>% 
+  filter(`Month Date` == max(`Month Date`)) %>%
+  head(1) %>% 
+  collect() %>%
+  head(1) %>% 
+  pull()
+```
+
+```{r (SUS_LIVE), include = FALSE}
+SUS_LIVE <- tbl(SQL_CONNECTION, in_schema("SOM","SUS_LIVE"))
+
+max(SUS_LIVE$`Month Date`)
+```
+
+```{r (REFERENCE_CQC), include = FALSE}
+REFERENCE_CQC <- tbl(SQL_CONNECTION, in_schema("SOM", "REFERENCE_CQC3"))
+
+CQC <- REFERENCE_CQC %>% 
+  filter(`Service / Population Group` == "Overall") %>% 
+  dplyr::select(`GP-Practice Code`, `Domain`, `Latest Rating`,`Publication Date`) %>% 
+  collect() %>% 
+  pivot_wider(names_from = Domain, values_from = `Latest Rating`) %>% 
+  group_by(`GP-Practice Code`) %>% 
+  arrange(desc(`Publication Date`)) %>% 
+  dplyr::summarise(`Publication Date` = first(`Publication Date`[!is.na(`Publication Date`)]),
+            Safe = first(Safe[!is.na(Safe)]),
+            Effective = first(Effective[!is.na(Effective)]),
+            Caring = first(Caring[!is.na(Caring)]),
+            Responsive = first(Responsive[!is.na(Responsive)]),
+            `Well-led` = first(`Well-led`[!is.na(`Well-led`)]),
+            Overall = first(Overall[!is.na(Overall)]))
+```
+
+```{r (REFERENCE_POINTS), include = FALSE}
+QOF_Points  <- read_excel("Data/Provider Achieve-QOF2122-31-03-2022.xlsx", 
+    sheet = "Sheet1")
+
+QOF_Points_Year <- "2021/22"
+
+QOF_Points_All <- QOF_Points %>% 
+  dplyr::select(`Service Provider Id`,`Service Provider Name`,`CLINICAL`, `PH`, `QUALI`, `QOF2122`) %>% 
+  dplyr::rename(c(`Practice Code` = 1,
+           `Practice Name` = 2,
+           `Clinical (Out of 379)` = 3,
+           `Public Health (Out of 106)` = 4,
+           `Quality Improvement (Out of 74)` = 5,
+           `Total Points (Out of 559)` = 6))
+
+```
+
+```{r (REFERENCE_QOF), include = FALSE}
+#
+QOF <- tbl(SQL_CONNECTION, in_schema("SOM","QOF_2223"))
+#
+QOFDate<-QOF %>%
+  dplyr::select(ACH_DATE) %>% 
+  dplyr::summarise(Date = max(ACH_DATE)) %>% 
+  collect() %>% 
+  pull() 
+
+QOF <- QOF %>%
+  filter(`FIELD_NAME` %in% c("Denominator", "Numerator"),
+         IND_CODE %in% c("VI001", "VI002", "VI003", "VI004")) %>%
+  collect() %>%
+  spread(`FIELD_NAME`, `VALUE`) %>%
+  dplyr::select(IND_CODE,ORG_CODE,`Numerator`,`Denominator`) %>% 
+  mutate(`2223Achievement` = percent(`Numerator` / `Denominator`, accuracy = 1)) %>% 
+  dplyr::select(IND_CODE,ORG_CODE,`2223Achievement`) %>% 
+  spread(IND_CODE, `2223Achievement`)
+
+
+```
+
+
+```{r (REFERENCE_QOF_NAMES), include = FALSE}
+REFERENCE_QOF_NAMES <- tbl(SQL_CONNECTION, in_schema("SOM","REFERENCE_QOF_NAMES"))
+```
+
+```{r (PC Contacts), include = FALSE}
+PCContacts <- read_excel("Data/PCContacts.xlsx")
+```
+
+```{r (REGISTRATIONS), include = FALSE}
+REGISTRATIONS <- read_excel("Data/Registrations.xlsx") %>% 
+  filter(Quater == max(`Quater`)) 
+```
+
+
+```{r Community Pharmacy, include=FALSE}
+Community_Pharmacy <- read_excel("Data/Community Pharmacy.xlsx") %>% 
+  filter(`Provision Date` >= as.Date("2021-12-13")) %>% 
+  dplyr::select(`Provision Date`, `ReferrerProviderNHSCode`) %>% 
+  mutate(week = cut.Date(as.Date(`Provision Date`), breaks="week", start.on.monday = TRUE)) %>% 
+  dplyr::select(`week`, `ReferrerProviderNHSCode`) %>% 
+  group_by(`week`, `ReferrerProviderNHSCode`) %>% 
+  dplyr::summarise(Refferals = n()) %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = week, values_from = Refferals) %>% 
+  replace(is.na(.), 0) %>% 
+  replace("",0)
+  
+NCommunity_Pharmacy <- ncol(Community_Pharmacy)
+  
+Community_Pharmacy <- Community_Pharmacy %>% 
+  dplyr::select(1, (NCommunity_Pharmacy-11):NCommunity_Pharmacy-1)
+
+```
+
+```{r POMI, include = FALSE}
+POMI <- read_excel("Data/POMI.xlsx")
+
+POMI2 <- POMI %>% 
+  filter(Report_Period_End == max(Report_Period_End)) %>% 
+  pivot_wider(names_from = Field, values_from = Value) %>% 
+  mutate(`% Patients Enabled for ONLINE` = percent(Total_Pat_Enbld/patient_list_size, accuracy =1 ),
+         `% of Patients Enabled for APPTS` = percent(Pat_Appts_Enbld/patient_list_size, accuracy =1),
+         `% of Patients Enabled for PRESC` = percent(Pat_Presc_Enbld/patient_list_size, accuracy =1),
+         `% of Patients Enabled for DCR` = percent(Pat_DetCodeRec_Enbld/patient_list_size, accuracy =1)) %>% 
+  dplyr::select(Practice_Code, `% Patients Enabled for ONLINE`, `% of Patients Enabled for APPTS`, 
+         `% of Patients Enabled for PRESC`, `% of Patients Enabled for DCR`)
+
+POMIDATE <- max(POMI$Report_Period_End) 
+```
+
+``` {r Indicator data, include = FALSE}
+Ind1a <- WorkforceGP %>% 
+         dplyr::select (`MergePracticeCode`, `GP_Risk_RankC`)%>% 
+         mutate(`GP_Risk_RankC` = recode(`GP_Risk_RankC`, "high"="h", "medium"="m", "low"="l")) 
+Ind1b <- WorkforceNURSE %>% 
+         dplyr::select (`MergePracticeCode`,`Nurse_Risk_RankC` )%>% 
+         mutate(`Nurse_Risk_RankC` = recode(`Nurse_Risk_RankC`, "high"="h", "medium"="m", "low"="l")) 
+Ind1c <- WorkforceList %>% 
+         dplyr::select (`MergePracticeCode`, `List_Risk_RankC` )%>% 
+         mutate(`List_Risk_RankC` = recode(`List_Risk_RankC`, "high"="h", "medium"="m", "low"="l")) 
+Ind7 <- GPSurvey %>% 
+        dplyr::select(`Practice code`, `RiskC`)%>% 
+        mutate(`RiskC` = recode(`RiskC`, "high"="h", "medium"="m", "low"="l")) 
+Ind3 <- MM_Green %>% 
+        dplyr::select(`...2`,`Green_RankC`)%>% 
+        mutate(`Green_RankC` = recode(`Green_RankC`, "high"="h", "medium"="m", "low"="l")) 
+Ind8 <- MM_Finance%>% dplyr::select(`...1`, `Overspend_RankC`) %>% 
+        mutate(`Overspend_RankC` = recode(`Overspend_RankC`, "high"="h", "medium"="m", "low"="l"))
+Ind4 <- GPStandard %>% 
+        filter(`NHSE PoD Description`=="Accident + Emergency (ED)") %>%
+        dplyr::select(`GP Practice Code`, `RiskC`)%>% 
+        mutate(`RiskC` = recode(`RiskC`, "high"="h", "medium"="m", "low"="l")) 
+Ind5 <- GPStandard %>% 
+        filter(`NHSE PoD Description`=="Inpatient Emergency") %>%
+        dplyr::select(`GP Practice Code`, `RiskC`)%>% 
+        mutate(`RiskC` = recode(`RiskC`, "high"="h", "medium"="m", "low"="l")) 
+Ind11 <- AdviceGuidance%>% dplyr::select(`REFERRING_ORG_ID`, `RankC`)%>% 
+         mutate(`RankC` = recode(`RankC`, "high"="h", "medium"="m", "low"="l")) 
+Ind12 <- GP_Sizing%>% dplyr::select(`LES REF`, `UndersizedRisk`)%>% 
+         mutate(`UndersizedRisk` = recode(`UndersizedRisk`, "high"="h", "medium"="m", "low"="l")) 
+Ind13 <- DES %>% dplyr::select(`Code`, `Risk`)%>% 
+         mutate(`Risk` = recode(`Risk`, "high"="h", "medium"="m", "low"="l")) 
+Ind14 <- GP_Database %>% dplyr::select(`Code`, `Risk`)%>% 
+         mutate(`Risk` = recode(`Risk`, "high"="h", "medium"="m", "low"="l")) 
+Ind15 <- `1920Finance`%>% dplyr::select(`Practice Code`, `RiskC`)%>% 
+         mutate(`RiskC` = recode(`RiskC`, "high"="h", "medium"="m", "low"="l")) 
+
+Indicators<-Ind1a %>% 
+  left_join(Ind1b, by = c("MergePracticeCode" = "MergePracticeCode")) %>% 
+  left_join(Ind1c, by = c("MergePracticeCode" = "MergePracticeCode")) %>% 
+  left_join(Ind7, by = c("MergePracticeCode" = "Practice code")) %>% 
+  left_join(Ind3, by = c("MergePracticeCode" = "...2")) %>% 
+  left_join(Ind8, by = c("MergePracticeCode" = "...1")) %>%   
+  left_join(Ind4, by = c("MergePracticeCode" = "GP Practice Code")) %>%   
+  left_join(Ind5, by = c("MergePracticeCode" = "GP Practice Code")) %>%
+  left_join(Ind11, by = c("MergePracticeCode" = "REFERRING_ORG_ID")) %>% 
+  left_join(Ind12, by = c("MergePracticeCode" = "LES REF"))%>% 
+  left_join(Ind13, by = c("MergePracticeCode" = "Code"))%>% 
+  left_join(Ind14, by = c("MergePracticeCode" = "Code")) %>% 
+  left_join(Ind15, by = c("MergePracticeCode" = "Practice Code"))   
+```
+
+```{r (Risk Count), include = FALSE}
+
+RiskCounts<-rbind(WorkforceGP %>% dplyr::select (`MergePracticeCode`, `GP_Risk_RankC`) %>% 
+                                  dplyr::rename(`Practice Code`=`MergePracticeCode` , `Risk`=`GP_Risk_RankC`),
+                  WorkforceNURSE %>% dplyr::select (`MergePracticeCode`, `Nurse_Risk_RankC`) %>% 
+                                    dplyr::rename(`Practice Code`=`MergePracticeCode` , `Risk`=`Nurse_Risk_RankC`),
+                  WorkforceList %>% dplyr::select (`MergePracticeCode`, `List_Risk_RankC`) %>% 
+                                    dplyr::rename(`Practice Code`=`MergePracticeCode` , `Risk`=`List_Risk_RankC`),
+                  MM_Green %>% dplyr::select (`...2`,`Green_RankC`) %>% 
+                               dplyr::rename(`Practice Code`=`...2` , `Risk`=`Green_RankC`), 
+                  GPStandard %>% filter(`NHSE PoD Description`=="Accident + Emergency (ED)") %>% 
+                                 dplyr::select(`GP Practice Code`, `RiskC`) %>% 
+                                 dplyr::rename(`Practice Code`=`GP Practice Code`, `Risk`=`RiskC`),   
+                  GPStandard %>% filter(`NHSE PoD Description`=="Inpatient Emergency") %>%
+                                 dplyr::select(`GP Practice Code`, `RiskC`) %>% 
+                                 dplyr::rename(`Practice Code`=`GP Practice Code` , `Risk`=`RiskC`), 
+                 GPSurvey %>% dplyr::select(`Practice code`, `RiskC`) %>% 
+                                   dplyr::rename(`Practice Code`=`Practice code` , `Risk`=`RiskC`),
+                 GP_Sizing %>% dplyr::select(`LES REF`, `UndersizedRisk`) %>% 
+                               dplyr::rename(`Practice Code`=`LES REF`, `Risk`=`UndersizedRisk`),
+                `1920Finance` %>% dplyr::select(`Practice Code`, `RiskC`) %>% 
+                                  dplyr::rename(`Risk`=`RiskC`),
+                 GP_Database %>% dplyr::select(`Code`, `Risk`) %>% 
+                                dplyr::rename(`Practice Code`=`Code`),
+                 DES %>% dplyr::select(`Code`, `Risk`) %>% 
+                         dplyr::rename(`Practice Code`=`Code`),
+                 MM_Finance %>% dplyr::select(`...1`, `Overspend_RankC`) %>% 
+                                dplyr::rename(`Practice Code`=`...1` , `Risk`=`Overspend_RankC`),
+                 AdviceGuidance %>% dplyr::select(`REFERRING_ORG_ID`, `RankC`) %>% 
+                                    dplyr::rename(`Practice Code`=`REFERRING_ORG_ID`, `Risk`=`RankC`))
+
+RiskCount <- RiskCounts %>% 
+    group_by (`Practice Code`,`Risk`) %>% 
+    dplyr::summarise(Count=n()) %>% 
+    ungroup() %>% 
+    spread(`Risk`, Count)%>% 
+    arrange(desc(`high`), desc(medium))
+
+RiskCount$high[is.na(RiskCount$high)] <- 0
+RiskCount$medium[is.na(RiskCount$medium)] <- 0  
+RiskCount$low[is.na(RiskCount$low)] <- 0  
+
+RiskCount2<- RiskCount %>% 
+  inner_join(LKUP2, by= c("Practice Code" = "MergePracticeCode")) %>% 
+  dplyr::select(1,5,6,high,medium,low)
+```
+
+```{r 6months, include = FALSE}
+AFVDates3 <- LKUP2 %>% 
+  inner_join(AFVDates2, by= c("MergePracticeCode" = "PracticeCode")) %>% 
+  filter(`Alert`<=today()) %>% 
+  group_by(MergePracticeCode) %>% 
+  filter(Date == max(Date)) %>% 
+  ungroup()
+  
+Alert <- nrow(AFVDates3)
+```
+
+``` {r (gtlocal), include = FALSE}
+gtlocal <- function(data) {
+  gt(data) %>%
+  tab_options(table.font.size = 16) %>%
+  opt_table_lines(extent = "none") %>%
+  tab_style(style = list(cell_text(font = "Open Sans",
+                                   align = "left")),
+            locations = list(cells_title(groups = "title"))) %>%
+  tab_style(style = list(cell_text(font = "Open Sans",
+                                   align = "left")),
+            locations = list(cells_title(groups = "subtitle"))) %>%
+  tab_style(style = list(cell_text(font = "Open Sans",
+                                   weight = "bold",
+                                   align = "left")),
+            locations = list(cells_column_labels(everything()))) %>%
+  tab_style(style = list(cell_borders(sides = "bottom",
+                                      color = "black",
+                                      weight = px(2))),
+            locations = list(cells_column_labels(columns = everything()))) %>%
+  tab_options(row.striping.include_table_body = TRUE,
+              table.align = "left")}
+
+```
+
+# {.tabset}
+
+## Introduction {.tabset}
+
+### Intro
+
+This report provides a robust overview of primary care data that facilitates benchmarking highlighting which measures appear challenging to individual practices. This provides a risk based approach to identifying levels of potential concern and where there is a potential need for support and/or intervention resulting in the overall improvement to the quality of care delivered within primary care in a timely manner.
+
+There is no single definition of quality in general practice and some aspects are difficult to measure. The measures of key indicators will be ranked using standard deviation methodology where measures of quality against actual standards are already defined and in use; for example QOF clinical indicators. Variation may be warranted or unwarranted, depending on the context and wider supporting information available. 
+
+The key risk trigger indicators that will be used to signal the need to engage with a practice further are grouped in four areas:
+
+* Patient Safety
+* Clinical Effectiveness
+* Experience of Patients
+* Sustainability/Contractual Compliance
+
+There is no minimum number or level of triggered measures or indicators which would result in communication with a practice and potential intervention. No assumptions or conclusions will be made about the ability of the practice to provide safe and quality primary care provision.
+
+Data available upon request.
+
+### Help and Support
+
+For any questions about the content or technical detail of this report, please contact South Central West (SCW) Commissioning Support
+Unit (CSU) Business Intelligence Team:
+
+&nbsp;
+
+``` {r REFERENCE_TEAM, echo = FALSE}
+  
+REFERENCE_TEAM %>%
+  filter(Name %in% c("Elaine Walker-Gunns", "Joshua Herron")) %>% 
+  gtlocal() 
+```
+
+&nbsp;
+
+If you wish to discuss the interpretation of the data within this report, please contact:
+
+&nbsp;
+
+``` {r Contracts, echo = FALSE}
+PCContacts %>% 
+  filter(`Name`== "Kelly Coller") %>%  
+  dplyr::select(1:4) %>% 
+  gtlocal()
+```
+
+## Summary Tables {.tabset}
+
+### Visits Required
+
+In line with our Statutory duty to undertake a full deep-dive contractual review every three years, the following practices are due an Assurance Framework meeting within the next six months:
+
+**`r Alert` practices**
+
+``` {r Visit Table, echo = FALSE}
+AFVDates3%>% 
+  arrange(`3 Year Visit Due`) %>% 
+  dplyr::select("MergePracticeCode","PracticeDescription","Date","3 Year Visit Due") %>% 
+  mutate(Date = as.Date(Date),
+         `3 Year Visit Due` = as.Date(`3 Year Visit Due`)) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","Date of Last Visit","Visit Due"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 2:3))))
+```
+
+### Risk Changes
+
+The following practices have been flagged as having an increasing risk based on the methodology set out in the technical appendix.
+
+#### Medicine Management Scorecard
+
+(Increased risk since last month)
+
+```{r MMAlert, echo = FALSE}
+
+LKUP2 %>% 
+  inner_join(`MM_Green_Alert`, by= c("MergePracticeCode" = "...2")) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN","Green Indicators", "Green Indicators Last Month","Current Risk","Previous Risk"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp'))
+```
+
+#### GP Workforce
+
+(Increased risk since last quarter)
+
+```{r GPAlert, echo = FALSE}
+LKUP2%>% 
+  inner_join(`WorkforceGPRiskSummary`, by= c("MergePracticeCode")) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN","Current Risk","Previous Risk",
+                         "Partner Head Count", "Partner Head Count Last Quarter", "Change in Partner Head Count",
+                         "GP Head Count", "GP Head Count Last Quarter", "Change in GP Head Count",
+                         "GPs Aged 55+", "GPs Aged 55+ Last Quarter", "Change in GPs Aged 55+"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp'))
+```
+
+#### Nurse Workforce
+
+(Increased risk since last quarter)
+
+```{r NurseAlert, echo = FALSE}
+LKUP2%>% 
+  inner_join(`WorkforceNURSESummary`, by= c("MergePracticeCode")) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN","Current Risk","Previous Risk",
+                         "Nurse Head Count", "Nurse Head Count Last Quarter", "Change in Nurse Head Count",
+                         "Nurses Aged 55+", "Nurses Aged 55+ Last Quarter", "Change in Nurses Aged 55+"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp'))
+```
+
+#### Patient List
+
+(Increased risk since last quarter)
+
+```{r PatientListAlert, echo=FALSE}
+LKUP2%>% 
+  inner_join(`WorkforceListSummary`, by= c("MergePracticeCode")) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN","Current Risk","Previous Risk",
+                         "Change in Patients", "Change in Patients Last Quarter"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp'))
+```
+
+#### GP Patient Survey
+
+(Increased risk since last year)
+
+```{r SurveyAlert, echo=FALSE}
+LKUP2%>% 
+  inner_join(`GPSurveySummary`, by= c("MergePracticeCode" = "Practice code")) %>%
+    mutate(Score_appt_experience_2021 = percent(Score_appt_experience_2021,1), 
+         Score_appt_experience_2022 = percent(Score_appt_experience_2022,1),
+         Score_getting_through_2021 = percent(Score_getting_through_2021,1),
+         Score_getting_through_2022 = percent(Score_getting_through_2022,1),
+         Score_overall_experience_2021 = percent(Score_overall_experience_2021,1),
+         Score_overall_experience_2022 = percent(Score_overall_experience_2022,1)) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "Appointment Experience (Last Year)", "Appointment Experience",
+                         "Getting Through (Last Year)","Getting Through", 
+                         "Overall Experience (Last Year)"," Overall Experience", 
+                         "Risk (Last Year)", "Risk"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp'))
+```
+
+### Risk Counts
+
+The table below ranks practices by prevalence of indicators considered high risk across all 13 risk indicators.
+A practice will be considered of note if it has 5 or more high risk indicators.
+
+
+``` {r Risk Table, echo = FALSE}
+RiskCount2 %>% 
+  left_join(PCOGRating, by=c("Practice Code" = "Code")) %>% 
+  left_join(AFVDates2, by=c("Practice Code" = "PracticeCode")) %>% 
+  mutate(Date = as.Date(Date)) %>% 
+  dplyr::select(1:3,8,10,4:6) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN","PCOG RAG Rating", "Date of Last AF Visit",
+                         "high", "medium", "low"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:5)))) %>% 
+  formatStyle('high', color = 'red') %>% 
+  formatStyle('medium', color = 'orange') %>% 
+  formatStyle('low', color = 'green')
+```
+
+### Indicator
+
+The table below ranks practices by prevalence of indicators considered high risk illustrating the current perceived risk in each of the 13 risk indicators.
+
+``` {r Indicator Table, echo = FALSE}
+LKUP2$MergePracticeCode <- reorder.factor(LKUP2$MergePracticeCode, new.order=RiskCount2$`Practice Code`)
+
+LKUP2 <- LKUP2 %>% arrange(MergePracticeCode)
+
+LKUP2 %>% 
+  left_join(Indicators, by= c("MergePracticeCode" = "MergePracticeCode")) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "GP Workforce", "Nurse Workforce", "Patient List","GP Survey", "Medicines Management Scorecard","Medicines Management Finance", "A and E Attendances", "Emergency Admissions", "Advice and Guidance", "Premises", "Core Contract Directed Enhanced Services", "Standard Contract Enhanced Services","Finance"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(scrollX = TRUE, dom = 'ltp'),
+            escape = FALSE) %>% 
+    formatStyle(3:15, color = styleEqual(c('h', 'm', 'l'), c('red', 'orange', 'green')))
+```
+
+## Sustainability / Contract Compliance {.tabset}
+
+The following tables in this chapter provide the rank and perceived level of risk for each practice in each of the areas which make up the key risk indicator.
+
+### GP Workforce
+
+Data updated to: `r format(Workforce_Date, format="%B %Y")`
+
+GP (All): Total GPs Headcount
+
+GP (EXRL): All Qualified Permanent GPs (excludes Registrars & Locums) Headcount
+
+
+``` {r GP Risk Table, echo = FALSE}
+LKUP2 %>% 
+  left_join(WorkforceGPRisk, by= c("MergePracticeCode" = "MergePracticeCode")) %>% 
+  arrange(-(`GP_Risk_Rank`)) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN","Practice Ranking","Risk", "Risk Last Quarter", "Partner Head Count", "Partner Head Count Last Quarter","Partner Head Count Change","GP (All)","GP Head Count (EXRL)","GP Head Count (EXRL) Last Quarter","GP Head Count (EXRL) Change","GP FTE (EXRL)", "GP FTE (EXRL) Last Quarter","GP FTE (EXRL) Change", "GPs aged 55+ (EXRL)", "GPs aged 55+ (EXRL) Last Quarter", "GPs aged 55+ (EXRL) Change", "Patients Per GP FTE (EXRL)"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp'))
+```
+
+### Nursing and Direct Patient Care Staff
+
+Data updated to: `r format(Workforce_Date, format="%B %Y")`
+
+``` {r Nurse Risk Table, echo = FALSE}
+LKUP2%>% 
+  left_join(WorkforceNURSERisk, by= c("MergePracticeCode" = "MergePracticeCode")) %>% 
+  arrange(-(`Nurse_Risk_Rank`)) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN", "Practice Ranking","Risk","Risk Last Quarter", "Nurse Headcount","Nurse Headcount Last Quarter","Nurse Headcount Change", "Nurse FTE","Nurse FTE Last Quarter","Change in Nurse FTE Last Quarter", "Nurses aged 55+","Nurses aged 55+ Last Quarter","Nurses aged 55+ Change","Patients Per Nurse FTE"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:13))))
+```
+
+``` {r DCP Risk Table, echo = FALSE}
+LKUP2%>% 
+  left_join(WorkforceDCPRisk, by= c("MergePracticeCode" = "MergePracticeCode")) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN", "DPC Headcount", "DPC Headcount Last Quarter", "Change in DCP Headcount"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:5))))
+```
+
+### Patient List
+
+Data updated to: `r format(Workforce_Date, format="%B %Y")`
+
+``` {r List Risk Table, echo = FALSE}
+LKUP2%>% 
+  left_join(WorkforceListRisk, by= c("MergePracticeCode" = "MergePracticeCode")) %>% 
+  left_join(REGISTRATIONS %>% dplyr::select(`Practice Code`, `Total Registration`,`Total Deduction`), by= c("MergePracticeCode" = "Practice Code")) %>% 
+  left_join(CAREHOMEPOP, by = c("MergePracticeCode" = "PracticeCode")) %>% 
+  arrange((`CHANGE_PATIENTS_ratio`)) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN", "Risk", "Total Patients", "Total Patients Last Quarter", "Change in Total Patients", "Change in Total Patients", "Registrations", "Degregistrations", "Care Home Population"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                           columnDefs = list(list(className = 'dt-right', targets = 3:9))))
+```
+
+### Finance 2021/22
+
+``` {r Finance Table, echo = FALSE}
+LKUP2 %>% 
+  left_join(`1920Finance`, by= c("MergePracticeCode" = "Practice Code"))%>% 
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,PrimaryCareNetworkDescription, `Practice Total`,`Rank`,`RiskC`) %>% 
+  mutate(`Practice Total` = dollar_format(prefix="£")(`Practice Total`)) %>% 
+  arrange(-(`Rank`)) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN","Total Contract Earnings", "Practice Ranking", "Risk"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp'))
+```
+
+### Digital Enablers
+
+Based on the `r POMIDATE` POMI extraction.
+
+``` {r Online Table, echo = FALSE}
+LKUP2%>% 
+  left_join(`POMI2`, by= c("MergePracticeCode" = "Practice_Code")) %>% 
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,PrimaryCareNetworkDescription, `% Patients Enabled for ONLINE`, `% of Patients Enabled for APPTS`, `% of Patients Enabled for PRESC`, `% of Patients Enabled for DCR`) %>% 
+  datatable(colnames = c("Practice Code" =1,"Practice Name"=2,"PCN"=3),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp'))
+```
+
+## Clinical Effectiveness {.tabset}
+
+The following tables in this chapter provide the rank and perceived level of risk for each practice in each of the areas which make up the key risk indicator.
+
+### Medicine Management Finance
+
+Data updated to: `r MM_Fin_Date`
+
+``` {r MMFinance Table, echo = FALSE}
+LKUP2%>% 
+  left_join(`MM_Finance`, by= c("MergePracticeCode" = "...1")) %>% 
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,PrimaryCareNetworkDescription, `OverspendMoney`,`Overspend`,`Overspend_Rank`,`Overspend_RankC`) %>% 
+  arrange(-(`Overspend_Rank`)) %>% 
+  mutate(`Overspend`=percent(`Overspend`, accuracy =1)) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN", "Overspend","Overspend", "Practice Ranking","Risk"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:6))))
+```
+
+### Medicine Management Scorecard
+
+Data updated to: `r MM_Date`
+
+``` {r MMGreen Table, echo = FALSE}
+LKUP2%>% 
+  left_join(MM_Green, by= c("MergePracticeCode" = "...2")) %>% 
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,PrimaryCareNetworkDescription,`Count of greens amongst indicators 1-20`,`GreenHist`, `Green_Rank`,`Green_RankC`) %>% 
+  arrange(-(`Green_Rank`)) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN","Green Indicators", "Green Indicators Last Month","Practice Ranking","Risk"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:6))))
+```
+
+### Medicine Management Prescribing 
+
+In the 12 months to and including `r MMDownloadDate`
+
+``` {r MMDownload Table, echo = FALSE}
+LKUP2%>% 
+  left_join(MMDownload, by= c("MergePracticeCode" = "GP Org Code")) %>% 
+  datatable(colnames = c("Practice Code" =1,"Practice Name"=2,"PCN"=3,
+                         "% antibiotics Co-amoxiclav, Cephalosporins, Quinolones (Low is good – NHS E&I target <10%)" = 4,
+                         "% Naproxen and Ibuprofen (High is good)" = 5,
+                         "Oral NSAIDS ADQs/STAR-PU (Low is good)" =6
+                         ),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:5))))
+```
+
+
+### National Diabeties Audit
+
+In the 12 months to `r Diabeties_Audit_Date`.
+
+The proportion of patients with all eight care processes.
+
+The eight care process checks are: HbA1c, blood pressure, cholesterol,
+serum creatinine, urine albumin, foot surveillance, body mass index
+(BMI) and smoking. For patients under 12 years of age, 'All eight care
+processes' is defined as HbA1c only as other care processes are not
+recommended in the NICE guidelines for this age group.
+
+``` {r Diabeties_Audit Table, echo = FALSE}
+LKUP2%>% 
+  left_join(Diabeties_Audit, by= c("MergePracticeCode" = "Organisation")) %>% 
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,PrimaryCareNetworkDescription,`Type 1`,`Type 2 and Other`) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN","Type 1", "Type 2 and Other"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:4))))
+```
+
+### Care Quality Commission (CQC)
+
+``` {r CQC, echo = FALSE}
+LKUP2%>% 
+  left_join(CQC, by= c("MergePracticeCode" = "GP-Practice Code")) %>%
+  mutate(`Publication Date` = as.Date(`Publication Date`, format = "%d/%m/%y")) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN","Report Date",
+                         "Safe", "Effective", "Caring", "Responsive", "Well-Led", "Overall"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:9))))
+```
+
+### QOF Points `r QOF_Points_Year`
+
+``` {r QOF_Points, echo = FALSE}
+LKUP2%>% 
+  left_join(QOF_Points_All, by= c("MergePracticeCode" = "Practice Code")) %>%
+  dplyr::select(1:3, 5:8) %>%  
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "Clinical (Out of 401)",
+                    "Public Health (Out of 160)",
+                    "Quality Improvement (Out of 74)",
+                    "Total Points (Out of 635)"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:6))))
+```
+
+### Vaccine and Immunisation (QOF)
+
+Date updated to: `r as.Date(as.character(QOFDate), "%Y%m%d")`
+
+``` {r QOFTable, echo = FALSE}
+LKUP2%>% 
+  left_join(QOF, by= c("MergePracticeCode" = "ORG_CODE")) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "VI001","VI002", "VI003","VI004"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:6))))
+```
+
+``` {r QOF, echo = FALSE}
+  REFERENCE_QOF_NAMES %>% 
+  collect() %>% 
+  filter(`IND_CODE` %in% c("VI001", "VI002", "VI003", "VI004")) %>% 
+  datatable(rownames = FALSE)
+```
+
+### Community Pharmacy
+
+Practices are required to refer 0.65 per 1,000 patients to community pharmacy per week.
+
+```{r ComPharm table, echo=FALSE}
+LKUP2%>% 
+left_join(POPULATION_QUARTER2, by = c("MergePracticeCode" = "GP Practice Code")) %>% 
+mutate(PracticeTarget = round(`GP-Registered Population` *0.65/1000,0.1)) %>% 
+select(-`GP-Registered Population`) %>% 
+left_join(Community_Pharmacy, by= c("MergePracticeCode" = "ReferrerProviderNHSCode")) %>% 
+datatable(colnames = c('Practice Code' = 1,'Practice Name' = 2,'PCN' = 3),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp'))
+```
+
+### A&E Attendance
+
+12 Months to: `r format(SUS_LIVE_Date, format="%B %Y")`
+
+``` {r AE, echo = FALSE}
+LKUP2%>% 
+  left_join(GPStandard, by= c("MergePracticeCode" = "GP Practice Code")) %>%
+  filter(`NHSE PoD Description`=="Accident + Emergency (ED)") %>%
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,`Primary Care Network Description`,`Observed Activity`,`DifferencePerc`,`Rank`,`RiskC`) %>% 
+  mutate(`DifferencePerc` = percent(`DifferencePerc`, accuracy = 1.1)) %>% 
+  arrange(-(`Rank`)) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "Activity 12 Months","Activity Variance", "Practice Ranking","Risk"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:6))))
+```
+
+### Emergency Admissions
+
+12 Months to: `r format(SUS_LIVE_Date, format="%B %Y")`
+
+#### Emergency Admissions
+
+``` {r EM, echo = FALSE}
+
+LKUP2%>% 
+  left_join(GPStandard, by= c("MergePracticeCode" = "GP Practice Code")) %>%
+  filter(`NHSE PoD Description`=="Inpatient Emergency") %>%
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,`Primary Care Network Description`,`Observed Activity`,`DifferencePerc`,`Rank`,`RiskC`) %>% 
+  mutate(`DifferencePerc` = percent(`DifferencePerc`, accuracy = 1.1)) %>% 
+  arrange(-(`Rank`)) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "Activity 12 Months","Activity Variance", "Practice Ranking","Risk"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:6))))
+```
+
+#### Emergency Admissions (1+ Length of Stay)
+
+``` {r EM1, echo = FALSE}
+
+LKUP2 %>% left_join(GPStandardEm1, by= c("MergePracticeCode" = "GP Practice Code")) %>%
+  filter(`NHSE PoD Description`=="Inpatient Emergency") %>%
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,`Primary Care Network Description`,`Observed Activity`,`DifferencePerc`,`Rank`,`RiskC`) %>% 
+  mutate(`DifferencePerc` = percent(`DifferencePerc`, accuracy = 1.1)) %>% 
+  arrange(-(`Rank`)) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "Activity 12 Months","Activity Variance", "Practice Ranking","Risk"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:6))))
+```
+
+#### Cardiovascular Disease
+
+``` {r EMCardio, echo = FALSE}
+LKUP2 %>% left_join(GPStandardAll, by= c("MergePracticeCode" = "GP Practice Code")) %>%
+  filter(`NHSE PoD Description`=="Inpatient Emergency",
+         `Conditions Flag`=="Cardiovascular disease") %>%
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,`Primary Care Network Description`, `Observed Activity`,`DifferencePerc`,`Rank`) %>% 
+  mutate(`DifferencePerc` = percent(`DifferencePerc`, accuracy = 1.1)) %>% 
+  arrange(-(`Rank`)) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "Activity 12 Months","Activity Variance", "Practice Ranking"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:5))))
+```
+
+#### Diabetes
+
+``` {r EMDiab, echo = FALSE}
+LKUP2 %>% 
+  left_join(GPStandardAll, by= c("MergePracticeCode" = "GP Practice Code")) %>%
+  filter(`NHSE PoD Description`=="Inpatient Emergency",
+         `Conditions Flag`=="Diabetes") %>%
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,`Primary Care Network Description`,`Observed Activity`,`DifferencePerc`,`Rank`) %>% 
+  mutate(`DifferencePerc` = percent(`DifferencePerc`, accuracy = 1.1)) %>% 
+  arrange(-(`Rank`)) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "Activity 12 Months","Activity Variance", "Practice Ranking"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:5))))
+```
+
+#### Respiratory Disease
+
+``` {r EMResp, echo = FALSE}
+LKUP2%>% 
+  left_join(GPStandardAll, by= c("MergePracticeCode" = "GP Practice Code")) %>%
+  filter(`NHSE PoD Description`=="Inpatient Emergency",
+         `Conditions Flag`=="Respiratory Disease") %>%
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,`Primary Care Network Description`,`Observed Activity`,`DifferencePerc`,`Rank`) %>% 
+  mutate(`DifferencePerc` = percent(`DifferencePerc`, accuracy = 1.1)) %>% 
+  arrange(-(`Rank`)) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "Activity 12 Months","Activity Variance", "Practice Ranking"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:5))))
+```
+
+#### Neoplasm
+
+``` {r EMNeoplasms, echo = FALSE}
+LKUP2%>% 
+  left_join(GPStandardAll, by= c("MergePracticeCode" = "GP Practice Code")) %>%
+  filter(`NHSE PoD Description`=="Inpatient Emergency",
+         `Conditions Flag`=="Neoplasms") %>%
+  dplyr::select(`MergePracticeCode`,`PracticeDescription`,`Primary Care Network Description`,`Observed Activity`,`DifferencePerc`,`Rank`) %>% 
+  mutate(`DifferencePerc` = percent(`DifferencePerc`, accuracy = 1.1)) %>% 
+  arrange(-(`Rank`)) %>%
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "Activity 12 Months","Activity Variance", "Practice Ranking"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:5))))
+```
+
+## Patient Experience {.tabset}
+
+The following tables in this chapter provide the rank and perceived level of risk for each practice in each of the areas which make up the key risk indicator.
+
+### Patient Survey 2022
+
+Q1. 68% of all Somerset respondents thought it was easy to get through to someone on the phone, compared to 53% nationally. 
+
+Q2. 80% of all Somerset respondents had a good experience of making their appointment, compared to 56% nationally. 
+
+Q3. 90% of all Somerset respondents had a good overall experience of their GP practice, compared to  72% nationally. 
+
+``` {r survey, echo = FALSE}
+LKUP2 %>% 
+  left_join((GPSurvey %>% dplyr::select(`Practice code`, Score_appt_experience_2021, Score_appt_experience_2022, Score_getting_through_2021, 
+         Score_getting_through_2022, Score_overall_experience_2021, Score_overall_experience_2022, RiskC)), 
+         by= c("MergePracticeCode" = "Practice code")) %>%
+  mutate(Score_appt_experience_2021 = percent(Score_appt_experience_2021,1), 
+         Score_appt_experience_2022 = percent(Score_appt_experience_2022,1),
+         Score_getting_through_2021 = percent(Score_getting_through_2021,1),
+         Score_getting_through_2022 = percent(Score_getting_through_2022,1),
+         Score_overall_experience_2021 = percent(Score_overall_experience_2021,1),
+         Score_overall_experience_2022 = percent(Score_overall_experience_2022,1)) %>% 
+  datatable(colnames = c("Practice Code","Practice Name","PCN",
+                         "Appointment Experience (Last Year)", "Appointment Experience",
+                         "Getting Through (Last Year)","Getting Through", 
+                         "Overall Experience (Last Year)"," Overall Experience", 
+                         "Risk"),
+            filter = 'top',
+            rownames = FALSE,
+            options = list(dom = 'ltp',
+                            columnDefs = list(list(className = 'dt-right', targets = 3:9))))
+```
+
+## Technical Appendix
+
+We utilise a range of data sources for our analysis. These include:
+
+* Somerset CCG GP Contract Database
+* Somerset CCG GP Sizing Tool
+* Somerset CCG Medicine Management Scorecard
+* Somerset CCG POMI report
+* Somerset CCG Contract Variation Tracker
+* Patient Survey data
+* NWRS data
+* Somerset CCG AF Visits Conducted list
+* E-Referral data
+* QOF data
+* Somerset CCG Practice Contract Earnings
+* Population data from Open Exeter
+* Deprivation data from NHSE
+* SUS data from NHS Digital
+* CQC data
+
+#### GP Workforce
+
+The GP Risk Score is the sum of 5 elements:
+
+* The headcount of partners:
+  If there are 4 or more partners then -1,
+  If there are 3 partners then 1,
+  If there are 2 partners then 2,
+  Else 3.
+  
+* The headcount of GPs (excluding registrars & locums):
+  If there are 6 or more GPs then -1,
+  If there are 5 GPs then 0,
+  If there are 4 GPs then 1,
+  If there are 3 GPs then 2,
+  Else 3.
+  
+* The patient:GP ratio (excluding registrars & locums):
+  If the ratio is greater than or equal to 3,000 then 3,
+  If the ratio is between 2,500 to 2,999 then 2,
+  If the ratio is between 2,000 to 2,499 then 1,
+  If the ratio is between 1,500 to 1,999 then 0,
+  Else -1.
+  
+* The percentage of GPs aged 55 plus (excluding registrars & locums):
+  If all GPs are aged 55 plus then 3,
+  If 80% of GPs are aged 55 plus then 2,
+  If 60% of GPs are aged 55 plus then 1,
+  If 40% of GPs are aged 55 plus then 0,
+  Else -1
+  
+* The quarterly change of FTE GPs (excluding registrars & locums):
+  If the number of FTE GPs has stayed the same or increased then 0,
+  Else 3.
+
+The GP Risk score is used to rank the practices. If a practice is ranked between 1-16, we consider this to be a low risk. If a practice is ranked 17-48, we consider this to be this is a medium risk. If a practice is ranked 49-64, we consider this to be a high risk.
+
+#### Nurse Workforce
+
+The Nurse Risk Score is the sum of 4 elements:
+  
+* The headcount of Nurses:
+  If there are 4 or more Nurses then -1,
+  If there are 3 Nurses then 0,
+  If there are 2 Nurses then 2,
+  Else 3.
+
+* The patient:Nurse ratio:
+  If the ratio is greater than or equal to 5,000 then 3,
+  If the ratio is between 4,000 to 4,999 then 2,
+  If the ratio is between 3,000 to 3,999 then 1,
+  Else -1.
+  
+* The percentage of Nurses aged 55 plus:
+  If 90% of Nurses are aged 55 plus then 3,
+  If 80% of Nurses are aged 55 plus then 2,
+  If 60% of Nurses are aged 55 plus then 1,
+  If 40% of Nurses are aged 55 plus then 0,
+  Else -1
+  
+* The quarterly change of FTE Nurses:
+  If the number of FTE Nurses has stayed the same or increased then 0,
+  Else 3.
+
+  
+The Nurse Risk score is used to rank the practices. If a practice is ranked between 1-16, we consider this to be a low risk. If a practice is ranked 17-48, we consider this to be a medium risk. If a practice is ranked 49-64, we consider this to be a high risk.
+
+#### Patient List
+
+The patient list risk score depends on the quarterly change in list size.
+  If the list has increased then 0,
+  If the list has decreased by up to 1% then 4,
+  If the list has decreased between 1%-2% then 8,
+  Else 12.
+
+The patient list risk score is used to rank the practices. If a practice has a risk score of 0/4, we consider this to be a low risk. If a practice has a risk score of 8, we consider this to be a medium risk. If a practice has a risk score of 12, we consider this to be a high risk.
+
+#### Premises
+
+The premises risk is based on their undersizing. The undersize is calculated as ((Desired Area / Gross Holding Area) -1). The practices are ranked based on their % undersize. If a practice is less than 16% undersized we consider this to be a low risk. If a practice is 16%-50% undersized we consider this to be a medium risk. If a practice more than 50% undersized we consider this to be a high risk.
+
+#### Finance
+
+The finance ranking and risk methodology is based on the practice income per patient excluding premises. If this is less than or equal to £134.62 we consider this to be a high risk. If it is between £134.56-£144.97 we consider this to be a medium risk. If this it is greater than or equal to £144.91 we consider this to be a low risk.
+
+#### Services
+
+Core Contract DESs: The five DESs are the Network Contract, Learning
+Disabilities Health Check Scheme, Minor Surgery, Weight Management and Out of Area In Hours
+Urgent Primary Medical Care. 
+
+The core DESs are considered to be Network Contract, Learning Disabilities Health Check Scheme, Minor Surgery.
+
+Practices providing all three core DES are considered low risk. Those
+providing a combination of 2 including the Network Contract are
+considered medium risk and those providing only 1 are considered high
+risk.
+
+NHS Standard Contract ESs:
+The three core ESs are considered to be the Anti-Coagulation Initiation, Stabilisation and Monitoring (ACISM), Primary Care Improvement Scheme (PCIS) and Enhanced Drug Monitoring (EDM). A practice is considered to be high risk if none or only one of the core enhanced services are delivered, medium risk if only two are delivered, else low risk.
+
+#### Digital Enablers
+
+The risk methodology remains under development. 
+Currently showing practice achievement against key digital enablers and is sourced from the NHS Digital Patient Online Management Information (POMI) report.
+
+#### Medicines Management
+
+The Medicines Management scorecard rank is based on the number of green indicators. If the practice is ranked between 1-16 we consider this to be a low risk. If the practice is ranked between 17-48 we consider this to be a medium risk. If the practice is ranked between 49-64 we consider this to be a high risk.
+
+#### A&E Attendances
+
+Based on the Somerset level of activity in the previous 12 months and the practices population make up (age&sex) we calculate the expected level of activity for the practice. The variance is then calculated by comparing the actual activity and the expected level. Practices are ranked based on the variance. If the practice is ranked between 1-16 we consider this to be a low risk. If the practice is ranked between 17-48 we consider this to be a medium risk. If the practice is ranked between 49-64 we consider this to be a high risk.
+
+#### Emergency Admissions
+
+Based on the Somerset level of activity in the previous 12 months and the practices population make up (age&sex) we calculate the expected level of activity for the practice. The variance is then calculated by comparing the actual activity and the expected level. Practices are ranked based on the variance. If the practice is ranked between 1-16 we consider this to be a low risk. If the practice is ranked between 17-48 we consider this to be a medium risk. If the practice is ranked between 49-64 we consider this to be a high risk.
+
+#### Advice and Guidance
+
+Advice and Guidance utilisation is calculated based on the e-Referral dataset, comparing the requests for Advice and Guidance and all referrals to secondary care in specialties that accept A&G requests.
+
+#### Patient Survey
+
+The risk score for the patient survey is based on the 3 questions identified. For each of these questions the percentage of positive responses is calculated. A practice is rated as high risk if they are more than 1.5 Standard Deviations below the mean for any of these questions.

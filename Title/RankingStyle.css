@@ -1,0 +1,125 @@
+body div.main-container {
+    max-width: 95vw;
+}
+
+body .toc-content {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+title{
+  font-family: Arial;
+  font-size: 16pt;
+  font-weight: bold;
+  color: #FFFFFF;
+  background: #005EB8;
+  height: 80px;
+  line-height: 80px;
+  padding-left: 10px;
+  margin: auto;
+}
+
+body .main-container {
+  margin-left: 30px;
+  margin-right: 30px;
+  background-color: #F0F4F5;
+}
+
+body{
+  font-family: Arial;
+  font-size: 10pt;
+  color: #212B32;
+  background-color: #F0F4F5;
+  line-height: 1.6;
+}
+
+h1.title{
+  font-family: Arial;
+  font-size: 16pt;
+  font-weight: bold;
+  color: #FFFFFF;
+  background: #005EB8;
+  height: 80px;
+  line-height: 80px;
+  padding-left: 10px;
+  margin: auto;
+}
+
+h1{
+  font-family: Arial;
+  font-size: 14pt;
+  font-weight: bold;
+  color: #212B32;
+}
+
+h2{
+  font-family: Arial;
+  font-size: 12pt;
+  color: #212B32;
+  line-height: 1.6;
+}
+
+.tocify {
+  top: 100px;
+  width: 100% !important;
+  border: none;
+  border-radius: 0px;
+}
+
+.list-group-item{
+  font-family: Arial;
+  margin: 10px 0px 20px 0px;
+  font-size: 10pt;
+  line-height: 10px;
+  color: #005EB8;
+  background-color: #F0F4F5;
+  border: 0px;
+}
+
+.list-group-item.active,
+.list-group-item.active:hover{
+  font-family: Arial;
+  color: #212B32;
+  font-weight: bold;
+  background-color: #FFEB3B;
+  border-bottom: 4px solid #212B32;
+  text-decoration: none;
+}
+
+.list-group-item:hover{
+  font-family: Arial;
+  font-size: 10pt;
+  color: #7C2855;
+  background-color: #F0F4F5;
+  text-decoration: underline;
+}
+
+.nav-pills > a{
+    font-family: Arial;
+    color: #005EB8;
+    background-color: #F0F4F5;
+    }
+
+.nav-pills > li.active > a, .nav-pills > li.active > a:hover, .nav-pills > li.active > a:focus {
+    font-family: Arial;
+    color: #FFFFFF;
+    background-color: #007F3B;
+    border: 0px;
+    }
+
+a:link {
+  color: #005EB8;
+}
+
+a:visited {
+  color: #330072;
+}
+
+a:hover {
+  color: #7C2855;
+  background-color: #F0F4F5;
+}
+
+a:active {
+  color: #002F5C;
+}
