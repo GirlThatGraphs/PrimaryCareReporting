@@ -383,11 +383,11 @@ MM_Finance <- read_excel("O:/BSS/BI/Intelligence Services/BSSW/Somerset/Reports/
                          sheet = "Alphabetical Scorecard 20-21 ",
                          range = "A1:Y66")
 #
-MM_Green <- read_excel("O:/BSS/BI/Intelligence Services/BSSW/Somerset/Reports/Primary_Care_Report/Data/MM scorecard 2022-23 May Final.xlsx",
+MM_Green <- read_excel("Data/MM scorecard 2022-23 June draft.xlsx",
                        sheet = "Ranked scorecard 2022-23",
                        range = "A1:AX65")
 #
-MM_Date <- "May 2022"
+MM_Date <- "June 2022"
 #
 MM_Fin_Date <- "March 2021"
 
@@ -532,37 +532,37 @@ Diabeties_Audit <- Diabetes_Audit_T1 %>%
 POMI <- read_excel("Data/POMI.xlsx")
 
 POMI2 <- POMI %>% 
-         filter(Report_Period_End == max(Report_Period_End)) %>% 
-         pivot_wider(names_from = Field, values_from = Value) %>% 
+         filter(report_period_end == max(report_period_end)) %>% 
+         pivot_wider(names_from = field, values_from = value) %>% 
          mutate(`% Patients Enabled for ONLINE` = Total_Pat_Enbld/patient_list_size,
                 `% of Patients Enabled for APPTS` = Pat_Appts_Enbld/patient_list_size,
                 `% of Patients Enabled for PRESC` = Pat_Presc_Enbld/patient_list_size,
                 `% of Patients Enabled for DCR` = Pat_DetCodeRec_Enbld/patient_list_size) %>% 
-        select(Practice_Code, Report_Period_End, `% Patients Enabled for ONLINE`, `% of Patients Enabled for APPTS`,
+        select(practice_code, report_period_end, `% Patients Enabled for ONLINE`, `% of Patients Enabled for APPTS`,
                `% of Patients Enabled for PRESC`, `% of Patients Enabled for DCR`)
 
 POMIDATE <- POMI2 %>%
-            filter(`Practice_Code` == code) %>%
-            select(`Report_Period_End`) %>%
+            filter(`practice_code` == code) %>%
+            select(`report_period_end`) %>%
             pull()
 
 Online_perc <- POMI2 %>%
-               filter(`Practice_Code` == code) %>%
+               filter(`practice_code` == code) %>%
                select(`% Patients Enabled for ONLINE`) %>%
                pull()
 #
 OnlineAppts_perc <- POMI2 %>%
-                    filter(`Practice_Code` == code) %>%
+                    filter(`practice_code` == code) %>%
                     select(`% of Patients Enabled for APPTS`) %>%
                     pull()
 #
 OnlinePresc_perc <- POMI2 %>%
-                    filter(`Practice_Code` == code) %>%
+                    filter(`practice_code` == code) %>%
                     select(`% of Patients Enabled for PRESC`) %>%
                     pull()
 #
 OnlineDCR_perc <- POMI2 %>%
-                  filter(`Practice_Code` == code) %>%
+                  filter(`practice_code` == code) %>%
                   select(`% of Patients Enabled for DCR`) %>%
                   pull()
 ```
@@ -1690,6 +1690,9 @@ QOF_Points <- QOF_Points %>%
 
 ```{r NationalQOF, include = FALSE}
 X1920QOF <- read_excel("Data/1920QOF.xlsx") 
+
+X2122QOF <- read_excel("Data/2122QOF.xlsx") 
+
 ```
 
 ```{r (REFERENCE_QOF), include = FALSE}
@@ -1705,7 +1708,7 @@ QOFCCG1920 <- QOF_1920 %>%
   summarise(`NumeratorT` = sum(`Numerator`),
             `DenominatorT` = sum(`Denominator`)) %>% 
   ungroup() %>%
-  mutate(`AchievementT` = (`NumeratorT` / `DenominatorT`))
+  mutate(`AchievementT1920` = (`NumeratorT` / `DenominatorT`))
 #
 QOF_1920 <- QOF_1920 %>%
   filter(`FIELD_NAME` %in% c("Denominator", "Numerator")) %>%
@@ -1716,6 +1719,17 @@ QOF_1920 <- QOF_1920 %>%
   select(IND_CODE,ORG_CODE,`1920Achievement`)
 #
 QOF_2122 <- tbl(SQL_CONNECTION, in_schema("SOM","QOF_2122"))
+
+QOFCCG2122 <- QOF_2122 %>%
+  filter(`FIELD_NAME` %in% c("Denominator", "Numerator")) %>%
+  collect() %>%
+  spread(`FIELD_NAME`, `VALUE`) %>%
+  select(IND_CODE,`Numerator`,`Denominator`) %>% 
+  group_by(IND_CODE) %>% 
+  summarise(`NumeratorT` = sum(`Numerator`),
+            `DenominatorT` = sum(`Denominator`)) %>% 
+  ungroup() %>%
+  mutate(`AchievementT2122` = (`NumeratorT` / `DenominatorT`))
 
 QOF_2122 <- QOF_2122 %>%
   filter(`FIELD_NAME` %in% c("Denominator", "Numerator")) %>%
@@ -1746,16 +1760,20 @@ QOF <- QOF_2122 %>%
   left_join(QOF_2223, by=c("IND_CODE", "ORG_CODE")) %>%
   left_join(QOF_1920, by=c("IND_CODE", "ORG_CODE")) %>%
   left_join(QOFCCG1920, by=c("IND_CODE"="IND_CODE")) %>% 
+  left_join(QOFCCG2122, by=c("IND_CODE"="IND_CODE")) %>% 
   group_by(IND_CODE) %>% 
   mutate(`Rank`=rank(-`2223Achievement`)) %>% 
   ungroup() %>% 
   mutate(`2223Achievement`=scales::percent(`2223Achievement`, accuracy = 1),
          `2122Achievement`=scales::percent(`2122Achievement`, accuracy = 1),
          `1920Achievement`=scales::percent(`1920Achievement`, accuracy = 1),
-         `1920SomAchievement`=scales::percent(AchievementT, accuracy = 1)) %>% 
+         `1920SomAchievement`=scales::percent(AchievementT1920, accuracy = 1),
+         `2122SomAchievement`=scales::percent(AchievementT2122, accuracy = 1)) %>% 
   filter(ORG_CODE==code) %>% 
   left_join(X1920QOF, by = c("IND_CODE"="IND_CODE") ) %>% 
-  mutate(`1920 National Achievement`=scales::percent(`NAT`/100, accuracy = 1))
+  left_join(X2122QOF, by = c("IND_CODE"="IND_CODE") ) %>% 
+  mutate(`1920 National Achievement`=scales::percent(`NAT1920`/100, accuracy = 1),
+         `2122 National Achievement`=scales::percent(`NAT2122`/100, accuracy = 1))
 ```
 
 ```{r (REFERENCE_QOF_NAMES), include = FALSE}
@@ -2776,9 +2794,9 @@ Survey_Chart <- Survey_Chart_Data %>%
   scale_x_continuous(labels = percent_format())+
   scale_fill_manual("Response",
                     values = c("Very Poor" = "#AE2573",
-                               "Poor" = alpha("#AE2573", 0.7),
-                               "Medium" = alpha("#005EB8", 0.1),
-                               "Good" = alpha("#005EB8", 0.7),
+                               "Poor" = "#c6669d",
+                               "Medium" = "#e6eff8",
+                               "Good" = "#4d8ecd",
                                "Very Good" = "#005EB8")) +
   theme(panel.grid.minor = ggplot2::element_blank(),
         panel.grid.major.y = ggplot2::element_blank(),
@@ -2965,6 +2983,8 @@ QOF %>%
          `1920SomAchievement`,
          `1920 National Achievement`,
          `2122Achievement`,
+         `2122SomAchievement`,
+         `2122 National Achievement`,
          `2223Achievement`) %>%
   gt(rowname_col = "IND_CODE") %>%
   tab_spanner(label = "1920",
@@ -2972,7 +2992,9 @@ QOF %>%
                              `1920SomAchievement`,
                              `1920 National Achievement`)) %>%
   tab_spanner(label = "2122",
-              columns = vars(`2122Achievement`)) %>%
+              columns = vars(`2122Achievement`,
+                             `2122SomAchievement`,
+                             `2122 National Achievement`)) %>%
     tab_spanner(label = "2223",
               columns = vars(`2223Achievement`)) %>%
   tab_row_group(group = "Cancer",
@@ -3003,7 +3025,9 @@ QOF %>%
              `2122Achievement` = ("Achievement"),
              `1920Achievement` = ("Achievement"),
              `1920SomAchievement` = ("Somerset Achievement"),
-             `1920 National Achievement` = ("National Achievement"))
+             `1920 National Achievement` = ("National Achievement"),
+             `2122SomAchievement` = ("Somerset Achievement"),
+             `2122 National Achievement` = ("National Achievement"))
 ```
 
 
