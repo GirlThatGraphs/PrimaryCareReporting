@@ -11,6 +11,7 @@ output:
 fontsize: 12pt
 header-includes:
 - \usepackage{booktabs}
+- \usepackage{pagecolor}
 - \usepackage{longtable}
 - \usepackage{array}
 - \usepackage{multirow}
@@ -24,7 +25,6 @@ header-includes:
 - \usepackage[normalem]{ulem}
 - \usepackage{makecell}
 - \usepackage{xcolor}
-- \usepackage{pagecolor}
 - \usepackage{fancyhdr}
 - \usepackage{float}
 - \usepackage{booktabs}
@@ -383,11 +383,11 @@ MM_Finance <- read_excel("O:/BSS/BI/Intelligence Services/BSSW/Somerset/Reports/
                          sheet = "Alphabetical Scorecard 20-21 ",
                          range = "A1:Y66")
 #
-MM_Green <- read_excel("Data/MM scorecard 2022-23 June draft.xlsx",
+MM_Green <- read_excel("Data/MM scorecard 2022-23 July final.xlsx",
                        sheet = "Ranked scorecard 2022-23",
                        range = "A1:AX65")
 #
-MM_Date <- "June 2022"
+MM_Date <- "July 2022"
 #
 MM_Fin_Date <- "March 2021"
 
@@ -570,13 +570,13 @@ OnlineDCR_perc <- POMI2 %>%
 ```{r Contract Tracker, include = FALSE}
 #
 GMS_Contracts <-
-  read_excel("//somerset.xswhealth.nhs.uk/ccg/Directorate/Clinical Commissioning Development/Comm & PC Services/PRIMARY CARE/1/Contract Processes/Contract Variations/1. Contract Variation Tracker.xlsx",
+  read_excel("//somerset.xswhealth.nhs.uk/ccg/Directorate/Clinical Commissioning Development/Comm & PC Services/PRIMARY CARE/1/Contract Processes/Contract Variations/1. Contract Variation Tracker.xlsm",
              sheet = "GMS",
              skip = 1)
 
 #
 PMS_Contracts <-
-  read_excel("//somerset.xswhealth.nhs.uk/ccg/Directorate/Clinical Commissioning Development/Comm & PC Services/PRIMARY CARE/1/Contract Processes/Contract Variations/1. Contract Variation Tracker.xlsx",
+  read_excel("//somerset.xswhealth.nhs.uk/ccg/Directorate/Clinical Commissioning Development/Comm & PC Services/PRIMARY CARE/1/Contract Processes/Contract Variations/1. Contract Variation Tracker.xlsm",
              sheet = "PMS",
              skip = 1)
 #
@@ -1166,31 +1166,30 @@ FinanceRiskC <- `1920Finance` %>%
 ```
 
 ```{r LD Report, include = FALSE}
-LD_Health_CheckIn <- read_excel("Data/LD_2122.xlsx")
+LD_Health_CheckIn <- read_excel("Data/LD health Check Scheme Practice Payment 22-23.xlsm",
+                                range = "A3:AO67")
 
 LD_Health_Check<- LD_Health_CheckIn %>%
-  mutate(Date = case_when (is.na(`Q2 Actual`)~"Q1",
-                           is.na(`Q3 Actual`)~"Q2",
-                           is.na(`Q4 Actual`)~"Q3",
-                           TRUE ~ "Q4")) %>% 
-  replace_na(list(`Q1 Actual`=0,`Q2 Actual`=0,`Q3 Actual`=0,`Q4 Actual`=0)) %>% 
-  filter(`GP Practice`!= "ALL SOMERSET GP PRACTICES") %>% 
-  mutate(`YTD Actual` = `Q1 Actual`+`Q2 Actual`+`Q3 Actual`+`Q4 Actual`) %>% 
-  mutate(`YTD Performance` = `YTD Actual`/`LD Register Size`)
+  mutate(Date = case_when (is.na(`CRP...6`)~"M1",
+                           is.na(`CRP...9`)~"M2",
+                           is.na(`CRP...12`)~"M3",
+                           is.na(`CRP...15`)~"M4",
+                           is.na(`CRP...18`)~"M5",
+                           is.na(`CRP...21`)~"M6",
+                           is.na(`CRP...24`)~"M7",
+                           is.na(`CRP...27`)~"M8",
+                           is.na(`CRP...30`)~"M9",
+                           is.na(`CRP...33`)~"M10",
+                           is.na(`CRP...36`)~"M11",
+                           TRUE ~ "M12")) %>% 
+  filter(`Service Provider ID`==code) 
 
 LD_Health_CheckDate<-LD_Health_Check %>% 
-  filter(`GP Practice Code`==code) %>% 
   select(`Date`) %>% 
   pull()
   
-LD_Health_CheckCCG<-LD_Health_Check %>% 
-  summarise(`SOM List` = sum(`LD Register Size`),
-            `SOM YTD Actual` = sum(`YTD Actual`)) %>%
-    mutate(`SOM Performance` = `SOM YTD Actual`/`SOM List`)
-
 LD_Perf<-LD_Health_Check %>% 
-  filter(`GP Practice Code`==code) %>% 
-  select(`YTD Performance`) %>% 
+  select(`Total percentgage of health checks undertaken in 2022/23\r\n(based on average registered size)`) %>% 
   pull()
 ```
 
@@ -1747,6 +1746,17 @@ QOFDate<-QOF_2223 %>%
   collect() %>% 
   pull() 
 
+QOFCCG2223 <- QOF_2223 %>%
+  filter(`FIELD_NAME` %in% c("Denominator", "Numerator")) %>%
+  collect() %>%
+  spread(`FIELD_NAME`, `VALUE`) %>%
+  select(IND_CODE,`Numerator`,`Denominator`) %>% 
+  group_by(IND_CODE) %>% 
+  summarise(`NumeratorT` = sum(`Numerator`),
+            `DenominatorT` = sum(`Denominator`)) %>% 
+  ungroup() %>%
+  mutate(`AchievementT2223` = (`NumeratorT` / `DenominatorT`))
+
 QOF_2223 <- QOF_2223 %>%
   filter(`FIELD_NAME` %in% c("Denominator", "Numerator")) %>%
   collect() %>%
@@ -1761,6 +1771,7 @@ QOF <- QOF_2122 %>%
   left_join(QOF_1920, by=c("IND_CODE", "ORG_CODE")) %>%
   left_join(QOFCCG1920, by=c("IND_CODE"="IND_CODE")) %>% 
   left_join(QOFCCG2122, by=c("IND_CODE"="IND_CODE")) %>% 
+  left_join(QOFCCG2223, by=c("IND_CODE"="IND_CODE")) %>% 
   group_by(IND_CODE) %>% 
   mutate(`Rank`=rank(-`2223Achievement`)) %>% 
   ungroup() %>% 
@@ -1768,7 +1779,8 @@ QOF <- QOF_2122 %>%
          `2122Achievement`=scales::percent(`2122Achievement`, accuracy = 1),
          `1920Achievement`=scales::percent(`1920Achievement`, accuracy = 1),
          `1920SomAchievement`=scales::percent(AchievementT1920, accuracy = 1),
-         `2122SomAchievement`=scales::percent(AchievementT2122, accuracy = 1)) %>% 
+         `2122SomAchievement`=scales::percent(AchievementT2122, accuracy = 1),
+         `2223SomAchievement`=scales::percent(AchievementT2223, accuracy = 1)) %>% 
   filter(ORG_CODE==code) %>% 
   left_join(X1920QOF, by = c("IND_CODE"="IND_CODE") ) %>% 
   left_join(X2122QOF, by = c("IND_CODE"="IND_CODE") ) %>% 
@@ -1821,6 +1833,10 @@ web_data_html <- html_nodes(webpage,'.tuck-bottom')
 
 #Converting the ranking data to text
 web_data <- html_text(web_data_html)
+
+web_data2 <- web_data |> 
+  data.frame() |> 
+  filter(grepl("ICS",web_data) | grepl("%",web_data))
 ```
 
 ```{r Community Pharmacy, include=FALSE}
@@ -2839,31 +2855,31 @@ in `r (GPSurvey_Year -2)`.
 
 ### Where patient experience is best
 
--   `r web_data[1:1]`
+-   `r web_data2[1,]`
 
-    `r gsub("(%)(N)", "\\1 \\2", web_data[2])`
+    `r gsub("(%)(N)", "\\1 \\2", web_data2[2,])`
 
--   `r web_data[3]`
+-   `r web_data2[3,]`
 
-    `r gsub("(%)(N)", "\\1 \\2", web_data[4])`
+    `r gsub("(%)(N)", "\\1 \\2", web_data2[4,])`
 
--   `r web_data[5]`
+-   `r web_data2[5,]`
 
-    `r gsub("(%)(N)", "\\1 \\2", web_data[6])`
+    `r gsub("(%)(N)", "\\1 \\2", web_data2[6,])`
 
 ### Where patient experience could improve
 
--   `r web_data[7]`
+-   `r web_data2[7,]`
 
-    `r gsub("(%)(N)", "\\1 \\2", web_data[8])`
+    `r gsub("(%)(N)", "\\1 \\2", web_data2[8,])`
 
--   `r web_data[9]`
+-   `r web_data2[9,]`
 
-    `r gsub("(%)(N)", "\\1 \\2", web_data[10])`
+    `r gsub("(%)(N)", "\\1 \\2", web_data2[10,])`
 
--   `r web_data[11]`
+-   `r web_data2[11,]`
 
-    `r gsub("(%)(N)", "\\1 \\2", web_data[12])`
+    `r gsub("(%)(N)", "\\1 \\2", web_data2[12,])`
 
 More detail on the GPPS results can be found
 \href{https://gp-patient.co.uk/practices-search}{{\color{blue}{\underline{here}}}}.
@@ -2968,11 +2984,7 @@ row_spec(0,
 
 ## QOF Achievement
 
-The tables below gives current in year 2022/23 achievement within the
-ICBs key clinical priority areas as at
-`r as.Date(as.character(QOFDate), "%Y%m%d")`. Also shown are the 2022/23
-and 2019/20 achievements together with the 2019/20 Somerset and National
-average achievements. Where the information is blank, this is due to the
+The table below gives current in year 2022/23 practice and Somerset achievement within the ICBs key clinical priority areas as at `r as.Date(as.character(QOFDate), "%Y%m%d")`. Also shown are the 2019/20 & 2022/23 achievements at practice, Somerset and National level. Where the information is blank, this is due to the
 introduction of a new indicator.
 
 ```{r QOF_All,fig.height=6, fig.width=12, echo = FALSE, message=FALSE, warning=FALSE}
@@ -2985,18 +2997,20 @@ QOF %>%
          `2122Achievement`,
          `2122SomAchievement`,
          `2122 National Achievement`,
-         `2223Achievement`) %>%
+         `2223Achievement`,
+         `2223SomAchievement`) %>%
   gt(rowname_col = "IND_CODE") %>%
-  tab_spanner(label = "1920",
+  tab_spanner(label = "1920 Achievement",
               columns = vars(`1920Achievement`,
                              `1920SomAchievement`,
                              `1920 National Achievement`)) %>%
-  tab_spanner(label = "2122",
+  tab_spanner(label = "2122 Achievement",
               columns = vars(`2122Achievement`,
                              `2122SomAchievement`,
                              `2122 National Achievement`)) %>%
-    tab_spanner(label = "2223",
-              columns = vars(`2223Achievement`)) %>%
+    tab_spanner(label = "2223 Achievement",
+              columns = vars(`2223Achievement`,
+                             `2223SomAchievement`)) %>%
   tab_row_group(group = "Cancer",
                 rows = c("CAN004")) %>%
   tab_row_group(group = "Smoking",
@@ -3021,13 +3035,14 @@ QOF %>%
                 rows = c("AST006", "AST007")) %>%
   tab_row_group(group = "Chronic obstructive pulmonary disease",
                 rows = c("COPD010", "COPD008")) %>%
-  cols_label(`2223Achievement` = ("Achievement"),
-             `2122Achievement` = ("Achievement"),
-             `1920Achievement` = ("Achievement"),
-             `1920SomAchievement` = ("Somerset Achievement"),
-             `1920 National Achievement` = ("National Achievement"),
-             `2122SomAchievement` = ("Somerset Achievement"),
-             `2122 National Achievement` = ("National Achievement"))
+  cols_label(`2223Achievement` = ("Practice"),
+             `2122Achievement` = ("Practice"),
+             `1920Achievement` = ("Practice"),
+             `1920SomAchievement` = ("Somerset"),
+             `1920 National Achievement` = ("National"),
+             `2122SomAchievement` = ("Somerset"),
+             `2223SomAchievement` = ("Somerset"),
+             `2122 National Achievement` = ("National"))
 ```
 
 
@@ -3057,7 +3072,7 @@ row_spec(0,
 
 ## Learning Disabilities (LD) Health Checks
 
-As at `r LD_Health_CheckDate` 2021/22 the practice has currently
+As at `r LD_Health_CheckDate` 2022/23 the practice has currently
 completed `r scales::percent(LD_Perf)` of its target of 67% of required
 annual health checks.
 
@@ -3624,6 +3639,8 @@ kable_styling(latex_options = c("striped"), position = "left") %>%
 row_spec(0,
          bold = T) %>% 
   column_spec(2,width ="13cm")
+
+
 ```
 
 ### A&E Attendances
@@ -3667,3 +3684,5 @@ identified. For each of these questions the percentage of positive
 responses is calculated. A practice is rated as high risk if they are
 more than 1.5 Standard Deviations below the mean for any of these
 questions.
+
+
