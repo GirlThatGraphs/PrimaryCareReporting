@@ -32,7 +32,7 @@ smtp <- emayili::server(host = "send.nhs.net",
 
 email <- emayili::envelope() |>
   emayili::from("elaine.gunns@nhs.net") |>
-  emayili::to("kelly.coller@nhs.net", "patricia.hymas@nhs.net", "melanie.nixon2@nhs.net") |>
+  emayili::to("elaine.gunns@nhs.net", "kelly.coller@nhs.net", "patricia.hymas@nhs.net", "melanie.nixon2@nhs.net") |>
   emayili::subject("Monthly Ranking Reports") |> 
   emayili::text("The ranking reports have been run and are saved: S:/Shared Area/Assurance Framework practice reports/2022_23. Please let me know if there are any issues.")
 
